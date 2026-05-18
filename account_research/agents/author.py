@@ -162,36 +162,65 @@ class AuthorAgent(BaseAgent[AuthorInput, BriefData]):
         # Sprint 1.3 — blocking semantic validator. If the first emission has
         # weak citations, make ONE focused re-author pass; if weak citations
         # remain after that, strip the offending fields rather than ship them.
+        #
+        # B5 (Plan B Phase 2): when the new weak set is a SUBSET of the
+        # weak citations the orchestrator already flagged in the prior iter
+        # (``payload.previous_weak_citations``), Author has already tried
+        # fixing them and the model is returning the same garbage. Skip the
+        # re-pass (saves one Opus call ≈ $0.85) and go straight to the
+        # field-stripping fallback.
         weak: list[dict] = []
         if _SEMANTIC_VALIDATOR_ENABLED:
             weak = compute_weak_citations(brief, payload.ledger)
             if weak:
-                ctx.logger.info(
-                    "Author: %d weak citation(s) flagged on first pass; "
-                    "making one blocking re-pass",
-                    len(weak),
-                )
-                synthetic_issues = _weak_to_review_issues(weak)
-                repass_payload = payload.model_copy(update={
-                    "previous_brief": brief,
-                    "reviewer_issues": list(payload.reviewer_issues) + synthetic_issues,
-                    "previous_weak_citations": weak,
-                    "iteration": payload.iteration + 1,
-                })
-                brief = self._emit_brief(repass_payload, ctx)
-                weak = compute_weak_citations(brief, payload.ledger)
-                if weak:
-                    ctx.logger.warning(
-                        "Author: %d weak citation(s) survived re-pass; "
-                        "replacing affected fields with 'Insufficient public data'",
+                prev_sigs = {
+                    _weak_signature(w) for w in payload.previous_weak_citations
+                }
+                cur_sigs = {_weak_signature(w) for w in weak}
+                already_attempted = bool(prev_sigs) and cur_sigs.issubset(prev_sigs)
+                if already_attempted:
+                    ctx.logger.info(
+                        "Author B5: %d weak citation(s) match prior-iter set "
+                        "(%s) — skipping re-pass, stripping fields directly",
                         len(weak),
+                        sorted({w["location"] for w in weak})[:5],
                     )
                     brief = _strip_weak_citation_fields(brief, weak)
-                    # After stripping, re-compute so callers see the truthful
-                    # remaining set (should be empty / unrelated locations only).
                     weak = compute_weak_citations(brief, payload.ledger)
+                else:
+                    ctx.logger.info(
+                        "Author: %d weak citation(s) flagged on first pass; "
+                        "making one blocking re-pass",
+                        len(weak),
+                    )
+                    synthetic_issues = _weak_to_review_issues(weak)
+                    repass_payload = payload.model_copy(update={
+                        "previous_brief": brief,
+                        "reviewer_issues": list(payload.reviewer_issues) + synthetic_issues,
+                        "previous_weak_citations": weak,
+                        "iteration": payload.iteration + 1,
+                    })
+                    brief = self._emit_brief(repass_payload, ctx)
+                    weak = compute_weak_citations(brief, payload.ledger)
+                    if weak:
+                        ctx.logger.warning(
+                            "Author: %d weak citation(s) survived re-pass; "
+                            "replacing affected fields with 'Insufficient "
+                            "public data'",
+                            len(weak),
+                        )
+                        brief = _strip_weak_citation_fields(brief, weak)
+                        # After stripping, re-compute so callers see the
+                        # truthful remaining set (should be empty / unrelated
+                        # locations only).
+                        weak = compute_weak_citations(brief, payload.ledger)
         self.last_weak_citations = weak
         return brief
+
+    @staticmethod
+    def _summarize_weak(weak: list[dict]) -> list[str]:
+        """Lightweight summary for logging — locations only, deduped."""
+        return sorted({w.get("location", "?") for w in weak})
 
     def _emit_brief(self, payload: AuthorInput, ctx: PipelineContext) -> BriefData:
         """One Author pass: build prompt, call LLM, post-validate citations.
@@ -438,6 +467,20 @@ _LIST_LOCATION_TO_ATTR = {
     "discovery_questions": "discovery_questions",
     "next_steps": "next_steps",
 }
+
+
+def _weak_signature(w: dict) -> tuple:
+    """Hashable identity of a weak-citation flag for set comparison (B5).
+
+    Two flags are "the same" if they target the same brief location with
+    the same set of cited evidence_ids. We deliberately ignore the
+    similarity score and the prose snippet — those drift in cosmetic ways
+    between iters even when the fundamental problem is identical.
+    """
+    return (
+        w.get("location", ""),
+        tuple(sorted(str(e) for e in w.get("cited_evidence_ids", []))),
+    )
 
 
 def _weak_to_review_issues(weak: list[dict]) -> list[ReviewIssue]:

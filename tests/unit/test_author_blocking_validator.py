@@ -153,3 +153,90 @@ def test_repass_then_fallback_when_still_weak():
     # The evidence_ids for that field should be cleared since the prose
     # no longer makes a sourced claim.
     assert out.quick_take.evidence_ids == []
+
+
+# ---------------------------------------------------------------------------
+# Plan B / B5 — skip re-pass when weak set matches the prior iter's
+# ---------------------------------------------------------------------------
+
+
+def test_b5_skip_repass_when_weak_signatures_match_prior_iter():
+    """B5: orchestrator iter 2+ — Author's previous_weak_citations carries
+    the weak set from iter 1. If the new first-emit weak set is identical
+    (same locations + cited evidence_ids), the re-pass is skipped and
+    the fields are stripped directly. One Opus call saved (~$0.85).
+    """
+    entity = Entity(name="X", type=EntityType.COMPANY)
+    ev = _ev(entity.id, "The company has 250 employees across four offices")
+
+    # First emit (in iter 2) flags the SAME weak location/evidence as
+    # previous_weak_citations carried from iter 1.
+    weak_emit = _weak_brief(entity.id, ev.id)
+    fake = _SequencedFakeLLM(responses=[weak_emit])  # only ONE response allowed
+    prior_weak = [{
+        "location": "quick_take.body",
+        "prose": "old prose",
+        "cited_evidence_ids": [str(ev.id)],
+        "jaccard": 0.0,
+        "missing_token_overlap": True,
+    }]
+    out = AuthorAgent().run(
+        AuthorInput(
+            entity=entity, ledger=[ev], estimates=[],
+            previous_weak_citations=prior_weak,
+            iteration=2,
+        ),
+        PipelineContext(llm_client=fake),
+    )
+    # Exactly ONE LLM call. Without B5, this would have made a second.
+    assert len(fake.calls) == 1
+    # Field is stripped to the fallback sentinel.
+    assert "Insufficient public data" in out.quick_take.body
+    assert out.quick_take.evidence_ids == []
+
+
+def test_b5_does_NOT_skip_repass_when_weak_signature_differs():
+    """B5: when the new weak set targets a DIFFERENT location or evidence
+    than the prior iter's, the re-pass still fires — the model might fix
+    a new mistake even though it didn't fix the old one."""
+    entity = Entity(name="X", type=EntityType.COMPANY)
+    ev = _ev(entity.id, "The company has 250 employees across four offices")
+
+    weak_emit = _weak_brief(entity.id, ev.id)
+    clean = _clean_brief(entity.id, ev.id)
+    fake = _SequencedFakeLLM(responses=[weak_emit, clean])
+    # Prior iter flagged a DIFFERENT location.
+    prior_weak = [{
+        "location": "industries[0]",  # different from current quick_take.body
+        "prose": "x",
+        "cited_evidence_ids": [str(ev.id)],
+        "jaccard": 0.0,
+        "missing_token_overlap": True,
+    }]
+    out = AuthorAgent().run(
+        AuthorInput(
+            entity=entity, ledger=[ev], estimates=[],
+            previous_weak_citations=prior_weak,
+            iteration=2,
+        ),
+        PipelineContext(llm_client=fake),
+    )
+    # Re-pass fired → 2 calls.
+    assert len(fake.calls) == 2
+    assert out.quick_take.body == clean.quick_take.body
+
+
+def test_b5_does_NOT_skip_when_no_previous_weak_citations():
+    """B5: on iter 1 (previous_weak_citations is empty), the gate doesn't
+    fire and the standard re-pass logic runs."""
+    entity = Entity(name="X", type=EntityType.COMPANY)
+    ev = _ev(entity.id, "The company has 250 employees across four offices")
+    weak_emit = _weak_brief(entity.id, ev.id)
+    clean = _clean_brief(entity.id, ev.id)
+    fake = _SequencedFakeLLM(responses=[weak_emit, clean])
+    AuthorAgent().run(
+        AuthorInput(entity=entity, ledger=[ev], estimates=[]),  # no prior weak
+        PipelineContext(llm_client=fake),
+    )
+    # Re-pass should run → 2 calls.
+    assert len(fake.calls) == 2
