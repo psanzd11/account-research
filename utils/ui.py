@@ -39,8 +39,13 @@ def inject_global_styles() -> None:
             -webkit-font-smoothing: antialiased;
         }}
 
-        /* ---- Hide Streamlit chrome ---- */
-        #MainMenu, footer, header {{ visibility: hidden; }}
+        /* ---- Hide Streamlit chrome ----
+         * Only hide the "Made with Streamlit" footer. Leave the header
+         * and toolbar fully intact — they host the sidebar collapse/expand
+         * button. Background is left as Streamlit's default; the brand
+         * pill in the sidebar establishes ours.
+         */
+        footer {{ visibility: hidden; }}
 
         /* ---- Typography ---- */
         html, body, [class*="st-"] {{
@@ -396,6 +401,7 @@ def setup_page(title: str) -> None:
     st.set_page_config(
         page_title=f"{title} — Account Research",
         layout="wide",
+        initial_sidebar_state="expanded",
     )
     inject_global_styles()
     _render_brand()
