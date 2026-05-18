@@ -44,10 +44,19 @@ class SourceType(str, Enum):
 class Verification(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    status: Literal["verified", "unverifiable", "contradicted", "source_dead"]
+    # A5 (2026-05-18): "rejected" status added for items that fail BOTH the
+    # anchored fuzzy match AND a full-page LCS sanity check. Rejected items
+    # never enter the Author-acceptable ledger — they are pruned before
+    # is_acceptable_for_author() even considers Tier-1 fallback.
+    status: Literal["verified", "unverifiable", "contradicted", "source_dead", "rejected"]
     method: Literal["exact_match", "semantic_match", "url_404", "content_changed", "fuzzy_match"]
     checked_at: datetime
     similarity: float | None = Field(default=None, ge=0.0, le=1.0)
+    # A5: LCS-style ratio computed against the full normalized page text.
+    # Separate field from ``similarity`` (which is the anchored window ratio
+    # used by the fuzzy_match path). Populated by the Fact-Checker when
+    # available; older rows leave this None.
+    claim_similarity_score: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class EvidenceItem(BaseModel):
@@ -95,6 +104,8 @@ class VerifiedEvidenceItem(EvidenceItem):
         """
         if self.verification.status == "verified":
             return True
+        # A5: rejected items never reach the Author — fail-loud at the
+        # Author boundary so the brief reflects honest evidence only.
         if self.verification.status != "unverifiable":
             return False
         tier1 = {

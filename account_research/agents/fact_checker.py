@@ -49,6 +49,16 @@ FLAG_VERIFICATION_RATE = 0.70
 # strict supersets of v1 behavior (more characters match).
 _V2_ENABLED = os.environ.get("FACT_CHECKER_V2", "1").lower() not in ("0", "false", "no", "off")
 
+# A5 (2026-05-18): LCS floor. After the anchored fuzzy match returns < 0.78
+# (i.e. would be marked unverifiable), compute a full-page LCS ratio and
+# REJECT outright when the ratio also falls below this floor. Catches
+# quotes that were subtly modified (or hallucinated) and would otherwise
+# slip through via the Tier-1 high-confidence fallback in
+# is_acceptable_for_author. Set to 0 (and FACT_CHECKER_LCS_FLOOR_FUZZY=0)
+# to disable. Threshold drawn from `improvements-plan.md` A5.
+_LCS_FLOOR = float(os.environ.get("FACT_CHECKER_LCS_FLOOR", "0.92"))
+_LCS_FLOOR_FUZZY = float(os.environ.get("FACT_CHECKER_LCS_FLOOR_FUZZY", "0.78"))
+
 # Tier-3 acceptance ratio. v1 used 0.85; v2 lowers to 0.78 but compensates with
 # a longer anchor head requirement so false-positive rate stays low.
 FUZZY_THRESHOLD = float(
@@ -167,23 +177,41 @@ class _MatchOutcome:
     status: str
     method: str
     similarity: float | None
+    # A5: full-page LCS ratio. Stored alongside ``similarity`` (anchored
+    # window ratio) for diagnostics; the LCS floor uses it to reject items
+    # that miss BOTH metrics.
+    claim_similarity_score: float | None = None
 
 
 def _classify(quote: str, page_html: str) -> _MatchOutcome:
     page_text = _strip_html(page_html)
     if quote in page_text:
-        return _MatchOutcome("verified", "exact_match", 1.0)
+        return _MatchOutcome("verified", "exact_match", 1.0, 1.0)
 
     nq = _normalize(quote)
     npage = _normalize(page_text)
 
     if nq and nq in npage:
-        return _MatchOutcome("verified", "fuzzy_match", 1.0)
+        return _MatchOutcome("verified", "fuzzy_match", 1.0, 1.0)
 
     best = _fuzzy_best(nq, npage)
     if best >= FUZZY_THRESHOLD:
-        return _MatchOutcome("verified", "fuzzy_match", round(best, 3))
-    return _MatchOutcome("unverifiable", "content_changed", round(best, 3) if best else None)
+        return _MatchOutcome("verified", "fuzzy_match", round(best, 3),
+                             round(best, 3))
+
+    # A5: anchored fuzzy match was weak. Run a full-page LCS check and
+    # decide between "rejected" (also weak on LCS — the quote is just not
+    # on this page) and "unverifiable" (LCS says there IS a substantial
+    # overlap, so the page is plausibly the source but rendering may have
+    # garbled the match).
+    lcs = SequenceMatcher(None, nq, npage).ratio() if nq and npage else 0.0
+    lcs_rounded = round(lcs, 3)
+    fuzzy_rounded = round(best, 3) if best else None
+    if lcs < _LCS_FLOOR and best < _LCS_FLOOR_FUZZY:
+        return _MatchOutcome("rejected", "content_changed",
+                             fuzzy_rounded, lcs_rounded)
+    return _MatchOutcome("unverifiable", "content_changed",
+                         fuzzy_rounded, lcs_rounded)
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +294,11 @@ class FactCheckerAgent(BaseAgent[FactCheckInput, FactCheckResult]):
                 # JS-rendered pages: direct_web_fetch returns a skeleton, the
                 # quote isn't in the HTML but lives in the rendered DOM. Retry
                 # via Anthropic's server-side web_fetch (Haiku 4.5, ~$0.02/call).
-                if outcome.status == "unverifiable" and can_js_fallback and not skip_direct:
+                # A5: also retry on ``rejected`` — a skeleton-only direct fetch
+                # often scores very low on both fuzzy and LCS, but Haiku's
+                # rendered DOM may surface the actual quote.
+                if (outcome.status in ("unverifiable", "rejected")
+                        and can_js_fallback and not skip_direct):
                     try:
                         js_resp = anthropic_web_fetch(url, ctx.llm_client)
                         if js_resp.content_text:
@@ -288,6 +320,7 @@ class FactCheckerAgent(BaseAgent[FactCheckInput, FactCheckResult]):
                 method=outcome.method,  # type: ignore[arg-type]
                 checked_at=checked_at,
                 similarity=outcome.similarity,
+                claim_similarity_score=outcome.claim_similarity_score,
             )
             verified_items.append(_attach(ev, ver))
             if outcome.status == "verified":
@@ -296,6 +329,14 @@ class FactCheckerAgent(BaseAgent[FactCheckInput, FactCheckResult]):
             elif outcome.status == "source_dead":
                 source_dead += 1
                 domain_counter["source_dead"] += 1
+            elif outcome.status == "rejected":
+                # A5: rejected items count separately from unverifiable. They
+                # never enter the Author-acceptable set, regardless of
+                # source tier. Tracked as ``rejected`` in the per-domain
+                # diagnostic; the LedgerReport rolls them up into the
+                # ``unverifiable`` total so existing callers stay shape-stable.
+                unverifiable += 1
+                domain_counter["rejected"] += 1
             else:
                 unverifiable += 1
                 domain_counter["unverifiable"] += 1

@@ -50,8 +50,44 @@ class Base(DeclarativeBase):
 
 
 def init_db() -> None:
-    """Create all tables. Idempotent."""
+    """Create all tables. Idempotent.
+
+    Also runs a tiny set of additive migrations for columns that landed
+    after the original schema. SQLAlchemy ``create_all`` only creates
+    missing tables — it does not ALTER existing ones — so any new
+    nullable column added to an existing table needs its own migration
+    line below.
+    """
     # Import here so models register with Base.metadata before create_all.
     from account_research import ledger  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _run_additive_migrations()
+
+
+def _run_additive_migrations() -> None:
+    """Idempotent ALTER TABLE shims for nullable columns added post-v1.
+
+    Each entry: (table, column, sqlite_column_def). Adds when missing,
+    no-ops when present. SQLite-only — Postgres should use a proper
+    migration tool, but this project ships SQLite-first.
+    """
+    if not DB_URL.startswith("sqlite"):
+        return
+    additions = [
+        # A5 (2026-05-18): full-page LCS ratio alongside the anchored
+        # window ratio that already lived in verification_similarity.
+        ("evidence_items", "claim_similarity_score", "REAL"),
+    ]
+    with engine.begin() as conn:
+        for table, column, coltype in additions:
+            existing = {
+                row[1]
+                for row in conn.exec_driver_sql(
+                    f"PRAGMA table_info({table})"
+                ).fetchall()
+            }
+            if column not in existing:
+                conn.exec_driver_sql(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {coltype}"
+                )

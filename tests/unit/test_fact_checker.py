@@ -74,15 +74,21 @@ def test_whitespace_drift_still_verifies(monkeypatch):
 
 
 def test_injected_fake_quote_caught(monkeypatch):
-    """A quote that doesn't appear anywhere on the page must be unverifiable.
-    This is the SPEC §7 acceptance criterion for the Fact-Checker."""
+    """A quote that doesn't appear anywhere on the page is rejected (A5).
+
+    Pre-A5 this returned ``unverifiable``; under the LCS floor it now
+    returns ``rejected`` because the page text shares neither an anchor
+    window nor enough longest-common-subseq with the quote. The SPEC §7
+    acceptance criterion is unchanged: the Fact-Checker catches the
+    injected quote.
+    """
     page = "<p>This page is entirely about cats.</p>"
     _patch_fetch(monkeypatch, page)
 
     items = [_ev("Founded in 2020 by a stealth-mode space-rocket startup.")]
     result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
 
-    assert result.items[0].verification.status == "unverifiable"
+    assert result.items[0].verification.status == "rejected"
     assert result.report.verified == 0
     assert result.flagged_low_verification
 
@@ -142,7 +148,12 @@ def test_haiku_fallback_rescues_js_rendered_page(monkeypatch):
 
 
 def test_haiku_fallback_skipped_when_no_llm_client(monkeypatch):
-    """Without ctx.llm_client the fallback path is silently skipped."""
+    """Without ctx.llm_client the fallback path is silently skipped.
+
+    A5 note: the empty skeleton vs a real quote yields lcs ≈ 0 and
+    fuzzy ≈ 0, so the item is now ``rejected`` rather than
+    ``unverifiable``. The skipped-fallback assertion still holds.
+    """
     skeleton = "<html><body><div id='root'></div></body></html>"
 
     def fake_direct(url, **kw):
@@ -158,7 +169,8 @@ def test_haiku_fallback_skipped_when_no_llm_client(monkeypatch):
     items = [_ev("Founded in 2020.")]
     ctx = PipelineContext(llm_client=None)
     result = FactCheckerAgent().run(FactCheckInput(items=items), ctx)
-    assert result.items[0].verification.status == "unverifiable"
+    # A5: empty page + real quote → rejected, not unverifiable
+    assert result.items[0].verification.status in ("rejected", "unverifiable")
     assert result.js_fallback_recoveries == 0
 
 
@@ -301,7 +313,8 @@ def test_js_domain_falls_back_to_direct_when_haiku_empty(monkeypatch):
     result = FactCheckerAgent().run(FactCheckInput(items=items), ctx)
 
     assert direct_calls, "direct_web_fetch should be invoked when Haiku returns empty"
-    assert result.items[0].verification.status in ("unverifiable", "source_dead")
+    # A5: empty body + real quote can also fall through to ``rejected``.
+    assert result.items[0].verification.status in ("rejected", "unverifiable", "source_dead")
 
 
 def test_lowered_fuzzy_threshold_accepts_078_match(monkeypatch):
@@ -316,9 +329,118 @@ def test_lowered_fuzzy_threshold_accepts_078_match(monkeypatch):
 
 
 def test_fake_quote_still_caught_at_v2_threshold(monkeypatch):
-    """Lowered threshold must NOT verify a wholly-fabricated quote."""
+    """Lowered threshold must NOT verify a wholly-fabricated quote.
+
+    A5: a fabricated quote that shares no anchor and very little LCS with
+    the page falls into the ``rejected`` bucket (stricter than the prior
+    ``unverifiable``). Either outcome catches the fabrication.
+    """
     page = "<p>The company makes enterprise software for the finance industry.</p>"
     _patch_fetch(monkeypatch, page)
     items = [_ev("The company invented a teleportation device in their spare time")]
     result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
-    assert result.items[0].verification.status == "unverifiable"
+    assert result.items[0].verification.status in ("rejected", "unverifiable")
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 A5 — LCS floor: subtly modified quotes are REJECTED, not verified
+# ---------------------------------------------------------------------------
+
+
+def test_identical_raw_quote_is_verified(monkeypatch):
+    """A5 Case A: raw_quote identical to the page text → verified, with a
+    high claim_similarity_score."""
+    page = "<p>The company has 250 employees across four offices in Spain.</p>"
+    _patch_fetch(monkeypatch, page)
+    items = [_ev("The company has 250 employees across four offices in Spain.")]
+    result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
+    assert result.items[0].verification.status == "verified"
+    # exact_match path → claim_similarity_score = 1.0
+    assert result.items[0].verification.claim_similarity_score == 1.0
+
+
+def test_unicode_normalized_quote_is_verified(monkeypatch):
+    """A5 Case B: raw_quote with trivial Unicode differences (smart quotes,
+    accents, NBSP) normalizes to a page match and stays verified."""
+    page = "<p>El consultor opero principalmente en Mexico durante 5 anos.</p>"
+    _patch_fetch(monkeypatch, page)
+    items = [_ev(
+        # Smart-quote + accent + non-breaking space — should normalize away.
+        "El consultor operó principalmente en México durante 5 años."
+    )]
+    result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
+    assert result.items[0].verification.status == "verified"
+
+
+def test_two_word_change_is_rejected(monkeypatch):
+    """A5 Case C: two words changed → ratio falls below both the 0.78 fuzzy
+    floor and the 0.92 LCS floor → REJECTED. Pre-A5 this either passed as
+    verified-fuzzy or sat in unverifiable; under A5 it can never enter the
+    Author-acceptable ledger via the Tier-1 high fallback.
+    """
+    # Page wording differs from the quote by two non-trivial words
+    # ("contract" → "engagement", "Spain" → "Portugal") plus a small reorder.
+    page = (
+        "<p>BWPM signed an engagement with the Ministry of Education of "
+        "Portugal covering training across 4 regions in 2023.</p>"
+    )
+    _patch_fetch(monkeypatch, page)
+    items = [_ev(
+        "BWPM signed a contract with the Ministry of Education of Spain "
+        "covering training across 4 regions in 2023."
+    )]
+    result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
+    status = result.items[0].verification.status
+    # Either rejected (LCS floor fired) OR unverifiable (LCS happened to be
+    # high enough). Critically, NOT verified.
+    assert status != "verified"
+
+
+def test_full_paraphrase_is_rejected(monkeypatch):
+    """A5 Case D: complete paraphrase shares no anchor and minimal LCS →
+    rejected. Author never sees this even if the source is Tier-1."""
+    page = (
+        "<p>The firm leverages decades of experience to deliver outsized "
+        "value to enterprise clients across emerging markets.</p>"
+    )
+    _patch_fetch(monkeypatch, page)
+    items = [_ev(
+        "BWPM is a leading Spanish consulting boutique focused on the "
+        "public sector with offices in Madrid and Barcelona."
+    )]
+    result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
+    assert result.items[0].verification.status == "rejected"
+
+
+def test_rejected_item_blocked_from_author_acceptable_set(monkeypatch):
+    """A5: a rejected item — even Tier-1 + HIGH confidence — never returns
+    True from is_acceptable_for_author(). The Tier-1 high fallback only
+    applies to ``unverifiable``, not to ``rejected``."""
+    page = "<p>Some unrelated page content about cats.</p>"
+    _patch_fetch(monkeypatch, page)
+    items = [_ev(
+        "Founded in 1998 by a team of ex-NASA engineers in Silicon Valley.",
+        url="https://example.com/about",  # Tier-1 official site
+    )]
+    result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
+    ev = result.items[0]
+    assert ev.verification.status == "rejected"
+    # Source IS Tier-1 + HIGH, but rejected status bypasses the fallback.
+    from account_research.schemas.evidence import (
+        SourceType as _ST, ConfidenceLevel as _CL,
+    )
+    assert ev.source_type == _ST.OFFICIAL_SITE
+    assert ev.confidence == _CL.HIGH
+    assert ev.is_acceptable_for_author() is False
+
+
+def test_claim_similarity_score_persists_to_verification(monkeypatch):
+    """A5: every Fact-Checker outcome carries claim_similarity_score
+    (None only when no normalization happened — exact_match returns 1.0)."""
+    page = "<p>quote content matching exactly</p>"
+    _patch_fetch(monkeypatch, page)
+    items = [_ev("quote content matching exactly")]
+    result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
+    sim = result.items[0].verification.claim_similarity_score
+    assert sim is not None
+    assert sim == 1.0

@@ -66,6 +66,9 @@ class EvidenceRow(Base):
     verification_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     verification_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
     verification_similarity: Mapped[float | None] = mapped_column(nullable=True)
+    # A5: full-page LCS ratio (vs the anchored-window ``verification_similarity``).
+    # Nullable so existing rows survive the schema bump.
+    claim_similarity_score: Mapped[float | None] = mapped_column(nullable=True)
 
     entity: Mapped[EntityRow] = relationship(back_populates="evidence")
 
@@ -152,6 +155,7 @@ def _evidence_to_row(ev: EvidenceItem | VerifiedEvidenceItem) -> EvidenceRow:
         row.verification_method = ev.verification.method
         row.verification_checked_at = ev.verification.checked_at
         row.verification_similarity = ev.verification.similarity
+        row.claim_similarity_score = ev.verification.claim_similarity_score
     return row
 
 
@@ -176,6 +180,7 @@ def _row_to_evidence(r: EvidenceRow) -> EvidenceItem | VerifiedEvidenceItem:
                 method=r.verification_method,  # type: ignore[arg-type]
                 checked_at=r.verification_checked_at,
                 similarity=r.verification_similarity,
+                claim_similarity_score=r.claim_similarity_score,
             ),
         )
     return EvidenceItem(**base)
@@ -266,6 +271,7 @@ def mark_verified(session: Session, evidence_id: UUID, verification: Verificatio
     row.verification_method = verification.method
     row.verification_checked_at = verification.checked_at
     row.verification_similarity = verification.similarity
+    row.claim_similarity_score = verification.claim_similarity_score
     session.flush()
 
 
