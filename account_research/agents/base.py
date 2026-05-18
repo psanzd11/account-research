@@ -21,6 +21,28 @@ InputT = TypeVar("InputT", bound=BaseModel)
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
 
+class OrphanEvidenceError(RuntimeError):
+    """Raised by the Designer when the BriefData cites evidence_ids that are
+    not present in the supporting ledger.
+
+    Author already filters orphans before returning (see
+    ``_filter_unknown_citations`` in ``agents.author``), so a Designer-level
+    orphan means Author's filter has a bug, or a hand-edited brief is being
+    rendered directly via the ``design`` subcommand. Either way the
+    orchestrator catches this and forces a revision iteration with the
+    orphan set surfaced as a critical issue, rather than producing a PDF
+    that violates CLAUDE.md rule 1 ("no claim without a citation").
+    """
+
+    def __init__(self, orphans: set[UUID]):
+        self.orphans: set[UUID] = set(orphans)
+        super().__init__(
+            f"Brief cites {len(self.orphans)} evidence_id(s) not in the "
+            f"ledger: {sorted(str(u) for u in self.orphans)[:5]}"
+            + (" ..." if len(self.orphans) > 5 else "")
+        )
+
+
 @dataclass
 class PipelineContext:
     """Per-run context handed to every agent in a pipeline run."""

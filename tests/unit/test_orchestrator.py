@@ -118,3 +118,103 @@ def test_max_iterations_can_be_capped(monkeypatch, tmp_path):
     assert result.review.status == "human_review_needed"
     assert result.iterations_used == 2
     assert log["author"] == 2
+
+
+# ---------------------------------------------------------------------------
+# A3 — Designer orphan-evidence fail-fast triggers Author revision
+# ---------------------------------------------------------------------------
+
+
+def test_orphan_evidence_forces_author_revision(monkeypatch, tmp_path):
+    """A3: Designer detects an orphan UUID on iter 1 → orchestrator skips
+    Reviewer, loops back to Author with a synthetic critical issue, second
+    iter renders cleanly and Reviewer approves."""
+    from account_research.agents.base import OrphanEvidenceError
+    from account_research.agents.designer import DesignReport
+
+    pdf = tmp_path / "x.pdf"
+    call_log = {"author": 0, "designer": 0, "reviewer": 0}
+
+    def author_run(self, payload, ctx):
+        call_log["author"] += 1
+        # iter 1: brief cites a random UUID (orphan); iter 2: clean brief.
+        if call_log["author"] == 1:
+            return BriefData(
+                entity_id=payload.entity.id,
+                hero=HeroSection(name="X", entity_type=EntityType.COMPANY),
+                quick_take=QuickTake(body="ok", evidence_ids=[uuid4()]),
+            )
+        return BriefData(
+            entity_id=payload.entity.id,
+            hero=HeroSection(name="X", entity_type=EntityType.COMPANY),
+            quick_take=QuickTake(body="ok"),
+        )
+
+    def designer_run(self, payload, ctx):
+        call_log["designer"] += 1
+        ledger_ids = {e.id for e in payload.ledger}
+        orphans = payload.brief.all_evidence_ids() - ledger_ids
+        if orphans:
+            raise OrphanEvidenceError(orphans)
+        return DesignReport(pdf_path=str(payload.out_path))
+
+    def reviewer_run(self, payload, ctx):
+        call_log["reviewer"] += 1
+        return ReviewerReport(
+            status="approved", iteration=payload.iteration, issues=[],
+            pdf_path=str(pdf),
+        )
+
+    monkeypatch.setattr("account_research.agents.author.AuthorAgent.run", author_run)
+    monkeypatch.setattr("account_research.agents.designer.DesignerAgent.run", designer_run)
+    monkeypatch.setattr("account_research.agents.reviewer.ReviewerAgent.run", reviewer_run)
+
+    result = run_with_revision(
+        entity=Entity(name="X", type=EntityType.COMPANY),
+        ledger=[], estimates=[],
+        ctx=PipelineContext(),
+        pdf_path=pdf, max_iterations=3,
+    )
+    assert call_log["author"] == 2
+    assert call_log["designer"] == 2
+    assert call_log["reviewer"] == 1
+    assert result.review.status == "approved"
+    assert result.iterations_used == 2
+
+
+def test_orphan_evidence_on_final_iter_escalates(monkeypatch, tmp_path):
+    """A3: orphan on the final iteration escalates to human review."""
+    from account_research.agents.base import OrphanEvidenceError
+    from account_research.agents.designer import DesignReport
+
+    pdf = tmp_path / "x.pdf"
+
+    def author_run(self, payload, ctx):
+        return BriefData(
+            entity_id=payload.entity.id,
+            hero=HeroSection(name="X", entity_type=EntityType.COMPANY),
+            quick_take=QuickTake(body="ok", evidence_ids=[uuid4()]),
+        )
+
+    def designer_run(self, payload, ctx):
+        ledger_ids = {e.id for e in payload.ledger}
+        orphans = payload.brief.all_evidence_ids() - ledger_ids
+        if orphans:
+            raise OrphanEvidenceError(orphans)
+        return DesignReport(pdf_path=str(payload.out_path))
+
+    def reviewer_run(self, payload, ctx):
+        raise AssertionError("reviewer must not run when designer rejects")
+
+    monkeypatch.setattr("account_research.agents.author.AuthorAgent.run", author_run)
+    monkeypatch.setattr("account_research.agents.designer.DesignerAgent.run", designer_run)
+    monkeypatch.setattr("account_research.agents.reviewer.ReviewerAgent.run", reviewer_run)
+
+    result = run_with_revision(
+        entity=Entity(name="X", type=EntityType.COMPANY),
+        ledger=[], estimates=[],
+        ctx=PipelineContext(),
+        pdf_path=pdf, max_iterations=2,
+    )
+    assert result.review.status == "human_review_needed"
+    assert result.iterations_used == 2

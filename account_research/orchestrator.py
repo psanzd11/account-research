@@ -15,14 +15,14 @@ from pathlib import Path
 
 from account_research._progress import emit as progress
 from account_research.agents.author import AuthorAgent, AuthorInput
-from account_research.agents.base import PipelineContext
+from account_research.agents.base import OrphanEvidenceError, PipelineContext
 from account_research.agents.designer import DesignerAgent, DesignInput
 from account_research.agents.reviewer import ReviewInput, ReviewerAgent
 from account_research.schemas.brief import BriefData, ContactItem
 from account_research.schemas.entity import Entity
 from account_research.schemas.estimate import Estimate
 from account_research.schemas.evidence import VerifiedEvidenceItem
-from account_research.schemas.review import ReviewerReport
+from account_research.schemas.review import ReviewerReport, ReviewIssue
 
 MAX_ITERATIONS = 3
 
@@ -131,9 +131,57 @@ def run_with_revision(
         progress("designer", "start", iter=iter_tag)
         try:
             DesignerAgent().run(
-                DesignInput(brief=brief, out_path=str(pdf_path)), ctx
+                DesignInput(
+                    brief=brief, out_path=str(pdf_path),
+                    ledger=ledger,
+                ),
+                ctx,
             )
             progress("designer", "done", iter=iter_tag)
+        except OrphanEvidenceError as orphan_err:
+            # A3: don't crash and don't ship a PDF that violates "no claim
+            # without a citation". Synthesize a critical Reviewer issue and
+            # loop straight back to the Author for a revision pass.
+            progress("designer", "failed", iter=iter_tag)
+            progress("reviewer", "skipped")
+            ctx.logger.warning(
+                "Orchestrator: Designer rejected iter %d brief — %d orphan "
+                "evidence_id(s). Forcing Author revision.",
+                iteration, len(orphan_err.orphans),
+            )
+            if iteration == max_iterations:
+                review = _human_review_needed(pdf_path, iteration)
+                ctx.logger.warning(
+                    "Orchestrator: orphan evidence on final iteration — "
+                    "escalating to human review",
+                )
+                return OrchestratorResult(
+                    brief=brief, pdf_path=pdf_path, review=review,
+                    iterations_used=iteration,
+                )
+            previous_brief = brief
+            previous_weak = weak_citations
+            issues = [ReviewIssue(
+                severity="critical",
+                location="brief.evidence_ids",
+                claim=(
+                    f"{len(orphan_err.orphans)} cited evidence_id(s) "
+                    f"not present in the ledger"
+                ),
+                issue=(
+                    "Author emitted UUIDs in evidence_ids fields that do not "
+                    "exist in the input ledger. Every cited evidence_id MUST "
+                    "be an exact UUID from the ledger items shown above."
+                ),
+                suggested_fix=(
+                    "Recheck each evidence_id against the ledger; if a claim "
+                    "lacks a valid source, drop it or replace it with a "
+                    "ledger-backed alternative. The Designer aborted the "
+                    "PDF render to enforce this; no PDF was produced this "
+                    "iteration."
+                ),
+            )]
+            continue
         except Exception:
             progress("designer", "failed", iter=iter_tag)
             raise

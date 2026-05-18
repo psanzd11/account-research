@@ -3,6 +3,12 @@
 SPEC §4.6. No LLM. Thin wrapper around the parameterized pdf_builder that
 counts what was actually rendered and surfaces warnings for sparse sections.
 The Reviewer downstream consumes the rendered PDF + this report.
+
+A3: when a supporting ledger is supplied, the Designer pre-validates that
+every ``evidence_id`` cited in the brief actually exists in the ledger.
+Orphans raise :class:`OrphanEvidenceError` BEFORE the PDF is written —
+fail-fast at the cheapest possible step instead of paying an Author +
+Reviewer iteration to detect a buggy brief.
 """
 from __future__ import annotations
 
@@ -11,16 +17,25 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from account_research.agents.base import BaseAgent, PipelineContext
+from account_research.agents.base import (
+    BaseAgent,
+    OrphanEvidenceError,
+    PipelineContext,
+)
 from account_research.designer.pdf_builder import build_brief
 from account_research.schemas.brief import BriefData
+from account_research.schemas.evidence import VerifiedEvidenceItem
 
 
 class DesignInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     brief: BriefData
     out_path: str
+    # Optional: when provided, Designer pre-validates that every cited
+    # evidence_id in the brief exists in this ledger. Omit for the
+    # ``cli design`` subcommand where the brief is hand-loaded from disk.
+    ledger: list[VerifiedEvidenceItem] = Field(default_factory=list)
 
 
 class SectionAudit(BaseModel):
@@ -56,6 +71,22 @@ class DesignerAgent(BaseAgent[DesignInput, DesignReport]):
     def run(self, payload: DesignInput, ctx: PipelineContext) -> DesignReport:
         brief = payload.brief
         out_path = Path(payload.out_path)
+
+        # A3: orphan-evidence fail-fast. Author already filters orphans on its
+        # way out (see _filter_unknown_citations) — this guard catches the
+        # belt-and-suspenders case where a hand-edited brief slips through or
+        # Author's filter has a regression. Cheaper to detect here than after
+        # a full Reviewer iteration ($5+ in Opus tokens).
+        if payload.ledger:
+            ledger_ids = {ev.id for ev in payload.ledger}
+            orphans = brief.all_evidence_ids() - ledger_ids
+            if orphans:
+                ctx.logger.warning(
+                    "Designer: brief cites %d evidence_id(s) not in the "
+                    "ledger — aborting render so orchestrator can revise",
+                    len(orphans),
+                )
+                raise OrphanEvidenceError(orphans)
 
         path = build_brief(brief, out_path)
         ctx.logger.info("Designer rendered PDF to %s", path)
