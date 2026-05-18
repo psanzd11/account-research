@@ -27,6 +27,13 @@ class ReviewerReport(BaseModel):
     issues: list[ReviewIssue] = Field(default_factory=list)
     pdf_path: str
     reviewed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # B7 (Plan B Phase 3): True iff this Reviewer iteration successfully
+    # attached PDF page images to the LLM call. False when the rasterizer
+    # bailed (typically: poppler is not on PATH on this machine, OR the
+    # REVIEWER_VISION_ON_REVISION=0 kill switch is set). Surfaced in
+    # pages/2_Run.py so the operator knows when the small-font caveat catch
+    # was unavailable for the run.
+    vision_used: bool = False
 
     @property
     def has_critical(self) -> bool:

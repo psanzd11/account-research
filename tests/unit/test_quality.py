@@ -42,6 +42,7 @@ def _ev(
     source_type: SourceType = SourceType.OFFICIAL_SITE,
     confidence: ConfidenceLevel = ConfidenceLevel.HIGH,
     url: str = "https://example.com/p",
+    claim_similarity_score: float | None = None,
 ) -> VerifiedEvidenceItem:
     return VerifiedEvidenceItem(
         entity_id=uuid4(),
@@ -57,6 +58,7 @@ def _ev(
             method="fuzzy_match",
             checked_at=datetime.now(timezone.utc),
             similarity=0.9 if status == "verified" else None,
+            claim_similarity_score=claim_similarity_score,
         ),
     )
 
@@ -113,6 +115,28 @@ class TestCitationBacking:
         })
         # 1 verified out of 2 cited
         assert citation_backing(brief, [ev]) == 50.0
+
+    def test_b9_weighted_by_claim_similarity_score(self):
+        """A verified item with claim_similarity_score=0.6 should contribute
+        0.6, not 1.0. Two items (1.0 and 0.6) → 80% backing."""
+        strong = _ev(status="verified", claim_similarity_score=1.0)
+        weak = _ev(status="verified", claim_similarity_score=0.6)
+        brief = _brief_citing(strong, weak)
+        assert citation_backing(brief, [strong, weak]) == 80.0
+
+    def test_b9_missing_score_defaults_to_one(self):
+        """Older verifications (claim_similarity_score=None) get full weight
+        so the metric stays backwards compatible after the field was added."""
+        items = [_ev(status="verified", claim_similarity_score=None) for _ in range(3)]
+        brief = _brief_citing(*items)
+        assert citation_backing(brief, items) == 100.0
+
+    def test_b9_non_verified_still_contributes_zero(self):
+        """A 'rejected' or 'unverifiable' citation contributes 0 regardless
+        of any claim_similarity_score it may carry."""
+        rejected = _ev(status="rejected", claim_similarity_score=0.95)
+        brief = _brief_citing(rejected)
+        assert citation_backing(brief, [rejected]) == 0.0
 
 
 class TestTier1ShareAmongCited:

@@ -41,23 +41,32 @@ def _by_id(ledger: list[VerifiedEvidenceItem]) -> dict[UUID, VerifiedEvidenceIte
 def citation_backing(
     brief: BriefData, ledger: list[VerifiedEvidenceItem]
 ) -> float:
-    """% of cited evidence_ids whose verification.status is 'verified'.
+    """Weighted % of cited evidence backing the brief.
 
-    Evidence_ids cited by the brief but missing from the ledger are counted
-    as NOT verified (defensive — should never happen post UUID validator).
-    A brief with zero citations returns 100.0 (vacuously fully-backed; the
-    Designer will have rendered 'Insufficient public data' for empty fields).
+    A verified item contributes its `verification.claim_similarity_score`
+    (the LCS-style ratio computed against the full normalized page text by
+    the Fact-Checker, see A5). Items where that field is absent — older
+    rows, or any path that didn't run LCS — default to 1.0 so the metric
+    stays backward compatible. Non-verified citations contribute 0.
+
+    Evidence_ids cited by the brief but missing from the ledger are
+    counted as 0 (defensive — should never happen post UUID validator).
+    A brief with zero citations returns 100.0 (vacuously fully-backed;
+    the Designer will have rendered 'Insufficient public data' for empty
+    fields).
     """
     cited = brief.all_evidence_ids()
     if not cited:
         return 100.0
     lookup = _by_id(ledger)
-    verified = 0
+    total = 0.0
     for eid in cited:
         ev = lookup.get(eid)
-        if ev is not None and ev.verification.status == "verified":
-            verified += 1
-    return round(100.0 * verified / len(cited), 1)
+        if ev is None or ev.verification.status != "verified":
+            continue
+        score = ev.verification.claim_similarity_score
+        total += 1.0 if score is None else score
+    return round(100.0 * total / len(cited), 1)
 
 
 def tier1_share_among_cited(
