@@ -12,9 +12,11 @@ and the input ledger. Catches:
 Returns a ReviewerReport with issues by severity. If `status: revision_required`,
 the Orchestrator re-runs the Author with these issues attached.
 
-Vision support is optional via `use_vision=True` (passes page images alongside
-text). Without it the review is text-only — adequate for citation traceability
-but won't catch purely visual issues like a caveat rendered too small.
+Vision is **always on by default** (decision from Sprint 3.2 hardened in A2):
+the Reviewer attaches page images alongside the extracted text so it can
+catch caveats rendered in small font, near the badge, that text-only
+extraction misses. The kill-switch is the env var
+``REVIEWER_VISION_ON_REVISION=0`` — there is no per-call toggle anymore.
 """
 from __future__ import annotations
 
@@ -35,9 +37,12 @@ from account_research.schemas.evidence import VerifiedEvidenceItem
 from account_research.schemas.review import ReviewerReport
 
 
-# Feature flag (Phase 6). When ON: iter≥2 forces vision; pdfminer fallback
-# kicks in when pdfplumber returns near-empty text.
-_VISION_ON_REVISION_ENABLED = (
+# Kill-switch (A2). Defaults to ON: every Reviewer call attaches PDF page
+# images. Set REVIEWER_VISION_ON_REVISION=0 to disable for debugging or
+# environments without poppler. There is intentionally NO per-call override
+# anymore — the Sprint 3.2 conclusion was that text-only review on iter 1
+# kept missing caveats rendered in small font near the badge.
+_VISION_ENABLED = (
     os.environ.get("REVIEWER_VISION_ON_REVISION", "1").lower()
     not in ("0", "false", "no", "off")
 )
@@ -152,7 +157,6 @@ class ReviewInput(BaseModel):
     estimates: list[Estimate] = Field(default_factory=list)
     pdf_path: str
     iteration: int = 1
-    use_vision: bool = False
     # E3: weak citations surfaced by Author's semantic validator. The Reviewer
     # arbitrates each one — confirming, downgrading severity, or dismissing.
     weak_citations: list[dict] = Field(default_factory=list)
@@ -172,19 +176,16 @@ class ReviewerAgent(BaseAgent[ReviewInput, ReviewerReport]):
 
         pdf_text, low_text_pages = _extract_pdf_text_with_fallback(pdf_path, ctx)
 
-        # Sprint 3.2 — vision is always-on (was iter≥2). Caveats rendered in
-        # small font, near the badge, were missed by text-only review on iter 1.
-        # The poppler/rasterize fallback already degrades gracefully when the
-        # image dep is unavailable.
-        effective_use_vision = payload.use_vision
-        if _VISION_ON_REVISION_ENABLED:
-            effective_use_vision = True
-            if low_text_pages:
-                ctx.logger.info(
-                    "Reviewer: pages %s have low text extraction — vision "
-                    "fallback covers them",
-                    low_text_pages,
-                )
+        # A2: vision is gated only by the env kill-switch. There's no per-call
+        # override anymore — Sprint 3.2 established that text-only review on
+        # iter 1 missed caveats rendered in small font near the badge.
+        effective_use_vision = _VISION_ENABLED
+        if effective_use_vision and low_text_pages:
+            ctx.logger.info(
+                "Reviewer: pages %s have low text extraction — vision "
+                "fallback covers them",
+                low_text_pages,
+            )
 
         # Compact representations for the prompt
         ledger_payload = [

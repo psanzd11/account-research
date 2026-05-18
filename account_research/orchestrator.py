@@ -60,7 +60,6 @@ def run_with_revision(
     ctx: PipelineContext,
     pdf_path: Path,
     max_iterations: int = MAX_ITERATIONS,
-    use_vision: bool = False,
     contacts: list[ContactItem] | None = None,
     prior_brief_fallback: BriefData | None = None,
 ) -> OrchestratorResult:
@@ -158,7 +157,6 @@ def run_with_revision(
                 ReviewInput(
                     brief=brief, ledger=ledger, estimates=estimates,
                     pdf_path=str(pdf_path), iteration=iteration,
-                    use_vision=use_vision,
                     weak_citations=weak_citations,
                 ),
                 ctx,

@@ -149,7 +149,7 @@ def test_iteration_forced_to_match_input(monkeypatch, tmp_path):
 
 
 def test_vision_enabled_on_iteration_2(monkeypatch, tmp_path):
-    """E1: iter≥2 forces vision-mode even if use_vision=False in input."""
+    """A2: vision is always on by default — iter 2 included."""
     pdf = tmp_path / "x.pdf"
     pdf.write_bytes(b"%PDF-1.4 stub")
     monkeypatch.setattr(
@@ -160,8 +160,7 @@ def test_vision_enabled_on_iteration_2(monkeypatch, tmp_path):
     raster_calls: list[Path] = []
     def fake_raster(pdf_path):
         raster_calls.append(pdf_path)
-        # Return a single tiny PNG so the iterator produces output
-        return iter([])  # empty is fine for the test
+        return iter([])
 
     monkeypatch.setattr(
         "account_research.agents.reviewer._rasterize_pdf", fake_raster,
@@ -171,15 +170,15 @@ def test_vision_enabled_on_iteration_2(monkeypatch, tmp_path):
     fake = _FakeLLM(canned=canned)
     ReviewerAgent().run(
         ReviewInput(brief=_minimal_brief(), ledger=[], estimates=[],
-                    pdf_path=str(pdf), iteration=2, use_vision=False),
+                    pdf_path=str(pdf), iteration=2),
         PipelineContext(llm_client=fake),
     )
     assert raster_calls, "vision rasterizer must be invoked on iter>=2"
 
 
 def test_vision_enabled_on_iteration_1_too(monkeypatch, tmp_path):
-    """Sprint 3.2 — vision is now always-on (was iter≥2). Catches caveats
-    rendered in small font that text extraction may truncate."""
+    """Sprint 3.2 → A2: vision is always-on (no per-call toggle). Catches
+    caveats rendered in small font that text extraction may truncate."""
     pdf = tmp_path / "x.pdf"
     pdf.write_bytes(b"%PDF-1.4 stub")
     monkeypatch.setattr(
@@ -195,14 +194,14 @@ def test_vision_enabled_on_iteration_1_too(monkeypatch, tmp_path):
     canned = ReviewerReport(status="approved", iteration=1, pdf_path=str(pdf))
     ReviewerAgent().run(
         ReviewInput(brief=_minimal_brief(), ledger=[], estimates=[],
-                    pdf_path=str(pdf), iteration=1, use_vision=False),
+                    pdf_path=str(pdf), iteration=1),
         _ctx(canned),
     )
     assert raster_calls, "vision rasterizer must be invoked on iter 1 too"
 
 
 def test_low_text_pages_force_vision(monkeypatch, tmp_path):
-    """E1+E2: when pdfminer fallback can't extract, vision is forced even at iter 1."""
+    """A2: env flag is on by default — low-text pages still get vision coverage."""
     pdf = tmp_path / "x.pdf"
     pdf.write_bytes(b"%PDF-1.4 stub")
     monkeypatch.setattr(
@@ -218,10 +217,40 @@ def test_low_text_pages_force_vision(monkeypatch, tmp_path):
     canned = ReviewerReport(status="approved", iteration=1, pdf_path=str(pdf))
     ReviewerAgent().run(
         ReviewInput(brief=_minimal_brief(), ledger=[], estimates=[],
-                    pdf_path=str(pdf), iteration=1, use_vision=False),
+                    pdf_path=str(pdf), iteration=1),
         _ctx(canned),
     )
     assert raster_calls, "low-text pages should force vision fallback"
+
+
+def test_vision_disabled_via_env_kill_switch(monkeypatch, tmp_path):
+    """A2: setting REVIEWER_VISION_ON_REVISION=0 disables vision globally.
+
+    The kill switch is the only way to skip image attachment — there is no
+    per-call ``use_vision`` parameter anymore. Useful for environments
+    without poppler installed.
+    """
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.4 stub")
+    monkeypatch.setattr(
+        "account_research.agents.reviewer._extract_pdf_text_with_fallback",
+        lambda _p, ctx: ("rendered text", []),
+    )
+    raster_calls: list = []
+    monkeypatch.setattr(
+        "account_research.agents.reviewer._rasterize_pdf",
+        lambda p: (raster_calls.append(p) or iter([])),
+    )
+    # Flip the module-level constant since it's read at import time.
+    monkeypatch.setattr("account_research.agents.reviewer._VISION_ENABLED", False)
+
+    canned = ReviewerReport(status="approved", iteration=1, pdf_path=str(pdf))
+    ReviewerAgent().run(
+        ReviewInput(brief=_minimal_brief(), ledger=[], estimates=[],
+                    pdf_path=str(pdf), iteration=1),
+        _ctx(canned),
+    )
+    assert raster_calls == [], "kill switch must skip rasterization"
 
 
 def test_weak_citations_appear_in_user_prompt(monkeypatch, tmp_path):

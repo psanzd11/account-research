@@ -498,7 +498,6 @@ def cmd_run(args: argparse.Namespace) -> int:
                     ctx=ctx,
                     pdf_path=target_pdf,
                     max_iterations=args.max_iterations,
-                    use_vision=args.vision,
                     contacts=contacts,
                 )
                 brief_path = _save_brief(persisted_entity.id, result.brief)
@@ -709,7 +708,7 @@ def cmd_review(args: argparse.Namespace) -> int:
         report = ReviewerAgent().run(
             ReviewInput(
                 brief=brief, ledger=verified, estimates=estimates,
-                pdf_path=str(pdf_path), iteration=1, use_vision=args.vision,
+                pdf_path=str(pdf_path), iteration=1,
             ),
             ctx,
         )
@@ -1044,7 +1043,6 @@ def cmd_refine(args: argparse.Namespace) -> int:
                 estimates=estimates_list, ctx=ctx,
                 pdf_path=target_pdf,
                 max_iterations=args.max_iterations,
-                use_vision=args.vision,
                 contacts=contacts,
                 prior_brief_fallback=prior_brief,
             )
@@ -1123,8 +1121,6 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Single-shot Author + Designer; no revision loop.")
     p_run.add_argument("--max-iterations", type=int, default=3,
                        help="Max revision iterations (Author ↔ Reviewer).")
-    p_run.add_argument("--vision", action="store_true",
-                       help="Reviewer also receives PDF page images (needs poppler).")
     p_run.add_argument("--verbose", "-v", action="count", default=0)
     p_run.set_defaults(func=cmd_run)
 
@@ -1153,8 +1149,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_rev = sub.add_parser("review", help="Run the Reviewer over a rendered PDF.")
     p_rev.add_argument("entity_id", type=UUID)
-    p_rev.add_argument("--vision", action="store_true",
-                       help="Send page images alongside text (needs poppler).")
     p_rev.add_argument("--verbose", "-v", action="count", default=0)
     p_rev.set_defaults(func=cmd_review)
 
@@ -1179,10 +1173,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip retrying previously-unverifiable items with Haiku JS fetch.",
     )
     p_refine.add_argument("--max-iterations", type=int, default=3)
-    p_refine.add_argument(
-        "--vision", action="store_true",
-        help="Reviewer also receives PDF page images (needs poppler).",
-    )
     p_refine.add_argument("--verbose", "-v", action="count", default=0)
     p_refine.set_defaults(func=cmd_refine)
 
