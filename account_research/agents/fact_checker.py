@@ -230,6 +230,7 @@ class FactCheckerAgent(BaseAgent[FactCheckInput, FactCheckResult]):
         verified = 0
         unverifiable = 0
         source_dead = 0
+        rejected = 0  # B3: surfaced separately from unverifiable.
         js_recoveries = 0
         can_js_fallback = (
             payload.use_js_fallback and ctx.llm_client is not None
@@ -330,12 +331,12 @@ class FactCheckerAgent(BaseAgent[FactCheckInput, FactCheckResult]):
                 source_dead += 1
                 domain_counter["source_dead"] += 1
             elif outcome.status == "rejected":
-                # A5: rejected items count separately from unverifiable. They
-                # never enter the Author-acceptable set, regardless of
-                # source tier. Tracked as ``rejected`` in the per-domain
-                # diagnostic; the LedgerReport rolls them up into the
-                # ``unverifiable`` total so existing callers stay shape-stable.
-                unverifiable += 1
+                # A5 + B3: rejected items count separately from unverifiable.
+                # They never enter the Author-acceptable set, regardless of
+                # source tier. B3 surfaces this distinction up to the
+                # LedgerReport so the Library UI can render "rejected" vs
+                # "unverifiable" as distinct columns.
+                rejected += 1
                 domain_counter["rejected"] += 1
             else:
                 unverifiable += 1
@@ -346,6 +347,7 @@ class FactCheckerAgent(BaseAgent[FactCheckInput, FactCheckResult]):
             verified=verified,
             unverifiable=unverifiable,
             source_dead=source_dead,
+            rejected=rejected,
         )
         flagged = report.verification_rate < FLAG_VERIFICATION_RATE if report.total else False
         if flagged:

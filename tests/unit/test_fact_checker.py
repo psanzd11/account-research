@@ -215,7 +215,10 @@ def test_mixed_batch_metrics(monkeypatch):
     ]
     result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
     assert result.report.verified == 2
-    assert result.report.unverifiable == 1
+    # B3: the fabricated quote on page c lands in `rejected`, not
+    # `unverifiable`. The verification_rate is unchanged (2/3 verified).
+    assert (result.report.unverifiable + result.report.rejected) == 1
+    assert result.report.rejected == 1
     assert result.report.verification_rate == pytest.approx(2 / 3)
 
 
@@ -444,3 +447,48 @@ def test_claim_similarity_score_persists_to_verification(monkeypatch):
     sim = result.items[0].verification.claim_similarity_score
     assert sim is not None
     assert sim == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Plan B / B3 — surface rejected count separately in LedgerReport
+# ---------------------------------------------------------------------------
+
+
+def test_rejected_count_surfaced_in_ledger_report(monkeypatch):
+    """B3: items rejected by the A5 LCS floor land in
+    LedgerReport.rejected, NOT in unverifiable. Pre-B3 they were folded
+    into unverifiable and the UI couldn't tell them apart."""
+    page = "<p>This page is entirely about cats.</p>"
+    _patch_fetch(monkeypatch, page)
+    items = [_ev("Founded in 2020 by a stealth-mode space-rocket startup.")]
+    result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
+    assert result.report.rejected == 1
+    assert result.report.unverifiable == 0
+    assert result.report.verified == 0
+    # Total accounting still tied out
+    assert (result.report.verified + result.report.unverifiable
+            + result.report.rejected + result.report.source_dead) == result.report.total
+
+
+def test_unverifiable_and_rejected_split_correctly(monkeypatch):
+    """B3 + A5: mixed batch — verified + rejected items land in their own
+    buckets; unverifiable stays empty when nothing exhibits the
+    high-LCS-low-fuzzy pattern."""
+    pages = {
+        "https://a.example/": "<p>quote one is on this page</p>",
+        "https://b.example/": "<p>completely unrelated content about cats</p>",
+    }
+    def fake(url, **kw):
+        return FetchResult(url=url, status=200, content_text=pages.get(url, ""),
+                           fetched_at=datetime.now(timezone.utc), from_cache=False)
+    monkeypatch.setattr("account_research.agents.fact_checker.direct_web_fetch", fake)
+
+    items = [
+        _ev("quote one is on this page", "https://a.example/"),
+        _ev("Founded in 1998 by ex-NASA engineers in Silicon Valley.",
+            "https://b.example/"),
+    ]
+    result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
+    assert result.report.verified == 1
+    assert result.report.rejected == 1
+    assert result.report.unverifiable == 0

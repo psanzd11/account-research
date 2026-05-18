@@ -129,6 +129,11 @@ class LedgerReport(BaseModel):
     unverifiable: int = Field(ge=0)
     source_dead: int = Field(ge=0)
     estimated: int = Field(ge=0, default=0)
+    # B3 (2026-05-18): items rejected by the A5 LCS floor. Pre-B3 these were
+    # folded into ``unverifiable``; now reported separately so the Library
+    # UI can distinguish "page is real, content drifted" from "quote was
+    # never on the page". Default 0 keeps older JSON shapes loadable.
+    rejected: int = Field(ge=0, default=0)
 
     @property
     def verification_rate(self) -> float:

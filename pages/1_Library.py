@@ -66,14 +66,20 @@ def load_entities():
             verified = sum(1 for r in items if r.verification_status == "verified")
             unverif = sum(1 for r in items if r.verification_status == "unverifiable")
             dead = sum(1 for r in items if r.verification_status == "source_dead")
+            # B3: items the A5 LCS floor rejected outright (page didn't even
+            # plausibly contain the quote). Pre-B3 these were counted in
+            # `unverif`; now they're surfaced separately so the Library can
+            # distinguish "page rendered weird" from "quote was fabricated".
+            rejected = sum(1 for r in items if r.verification_status == "rejected")
             ests = s.query(EstimateRow).filter(EstimateRow.entity_id == e.id).all()
             est_str = ", ".join(f"{ex.value_range} ({ex.confidence})" for ex in ests) if ests else "—"
-            # Sourcing rate = verified / (verified + unverifiable). Excludes
-            # source_dead from the denominator: dead URLs are link rot
-            # (the Fact-Checker couldn't even re-fetch them), not a
-            # Researcher quality signal. Including them in the denominator
-            # punishes refine runs that grow the ledger.
-            checkable = verified + unverif
+            # Sourcing rate = verified / (verified + unverifiable + rejected).
+            # Excludes source_dead from the denominator: dead URLs are link
+            # rot (the Fact-Checker couldn't even re-fetch them), not a
+            # Researcher quality signal. Rejected items DO count against the
+            # rate — the Researcher emitted a quote that turned out to be
+            # absent from the page; that's a quality signal.
+            checkable = verified + unverif + rejected
             sourcing_rate = (verified / checkable) if checkable else 0.0
             pdfs = list(PDF_DIR.glob(f"*{e.id}*.pdf"))
             pdf_path = str(pdfs[0]) if pdfs else None
@@ -122,6 +128,7 @@ def load_entities():
                 "items": n,
                 "verified": verified,
                 "unverif": unverif,
+                "rejected": rejected,
                 "dead": dead,
                 "rate": sourcing_rate,
                 "sourcing_rate": sourcing_rate,
@@ -506,9 +513,11 @@ cm3.metric(
     "Sourcing rate",
     f"{int(selected['sourcing_rate']*100)}%",
     help="Of the items the Fact-Checker could evaluate (verified + "
-         "unverifiable), share that came back verified. Excludes "
-         "source_dead (URL rot) from the denominator so a refine "
-         "doesn't tank this number just by discovering more 404'd links.",
+         "unverifiable + rejected), share that came back verified. "
+         "Excludes source_dead (URL rot) from the denominator so a refine "
+         "doesn't tank this number just by discovering more 404'd links. "
+         "Includes rejected items (B3) — those count against the rate "
+         "because the Researcher emitted a quote that wasn't on the page.",
 )
 cm4.metric("Estimate", selected["estimate"], help=selected["estimate"])
 
@@ -548,14 +557,33 @@ bm4.metric(
 )
 
 with st.expander("Sourcing diagnostics (Researcher detail)"):
-    sd1, sd2, sd3 = st.columns(3)
+    sd1, sd2, sd3, sd4 = st.columns(4)
     sd1.metric("Verified", selected["verified"])
-    sd2.metric("Unverifiable", selected["unverif"])
-    sd3.metric("Source dead", selected["dead"])
+    sd2.metric(
+        "Unverifiable", selected["unverif"],
+        help="Quote not found via anchored fuzzy match, but the page "
+             "shares enough LCS overlap to be plausibly the source "
+             "(content drift / partial render).",
+    )
+    sd3.metric(
+        "Rejected", selected.get("rejected", 0),
+        help="A5 LCS floor: quote shares neither an anchor window nor "
+             "enough longest-common-subsequence with the page. The "
+             "Researcher emitted text that is not on this page. These "
+             "items NEVER enter the Author-acceptable ledger, even from "
+             "Tier-1 sources.",
+    )
+    sd4.metric(
+        "Source dead", selected["dead"],
+        help="URL returned 4xx / network error / timeout. Excluded from "
+             "the sourcing rate denominator because it's link rot, not a "
+             "Researcher quality signal.",
+    )
     st.caption(
         "These come from the full ledger persisted in the DB, before the "
         "Author filter. Author only sees the verified set plus Tier-1/HIGH "
-        "fallbacks; unverifiable & source_dead items never reach the PDF."
+        "fallbacks on `unverifiable`; `rejected` and `source_dead` items "
+        "never reach the PDF."
     )
 
 
