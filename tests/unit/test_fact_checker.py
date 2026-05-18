@@ -470,6 +470,69 @@ def test_rejected_count_surfaced_in_ledger_report(monkeypatch):
             + result.report.rejected + result.report.source_dead) == result.report.total
 
 
+# ---------------------------------------------------------------------------
+# Plan B / B4 — concurrent batch pre-fetch
+# ---------------------------------------------------------------------------
+
+
+def test_batch_prefetch_reuses_monkeypatched_direct_fetch(monkeypatch):
+    """B4: the pre-fetch path goes through the same module-level
+    ``direct_web_fetch`` symbol, so existing test monkeypatches keep
+    working. Each item gets fetched exactly once (deduped by URL).
+    """
+    call_log: list[str] = []
+    pages = {
+        "https://a.example/": "<p>quote one is on this page</p>",
+        "https://b.example/": "<p>quote two is on this page</p>",
+        "https://c.example/": "<p>quote three is on this page</p>",
+    }
+    def fake(url, **kw):
+        call_log.append(url)
+        return FetchResult(
+            url=url, status=200, content_text=pages.get(url, ""),
+            fetched_at=datetime.now(timezone.utc), from_cache=False,
+        )
+    monkeypatch.setattr("account_research.agents.fact_checker.direct_web_fetch", fake)
+
+    items = [
+        _ev("quote one is on this page", "https://a.example/"),
+        _ev("quote two is on this page", "https://b.example/"),
+        _ev("quote three is on this page", "https://c.example/"),
+    ]
+    result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
+    # All three items verified; each URL fetched exactly once.
+    assert result.report.verified == 3
+    assert sorted(call_log) == sorted(pages.keys())
+
+
+def test_batch_prefetch_disabled_via_env(monkeypatch):
+    """The kill-switch flag falls back to per-item sync fetches without
+    changing the output."""
+    monkeypatch.setattr(
+        "account_research.agents.fact_checker._BATCH_PREFETCH_ENABLED", False,
+    )
+    page = "<p>quote one is on this page</p>"
+    _patch_fetch(monkeypatch, page)
+    items = [_ev("quote one is on this page", "https://a.example/")]
+    result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
+    assert result.report.verified == 1
+
+
+def test_batch_prefetch_captures_httpx_errors_as_source_dead(monkeypatch):
+    """B4: when the parallel fetch raises an httpx error, the item lands
+    in source_dead via the same accounting as the sync path."""
+    def fake(url, **kw):
+        raise httpx.ConnectError("dns fail")
+    monkeypatch.setattr("account_research.agents.fact_checker.direct_web_fetch", fake)
+    items = [
+        _ev("quote one", "https://a.example/"),
+        _ev("quote two", "https://b.example/"),
+    ]
+    result = FactCheckerAgent().run(FactCheckInput(items=items), PipelineContext())
+    assert result.report.source_dead == 2
+    assert result.report.verified == 0
+
+
 def test_unverifiable_and_rejected_split_correctly(monkeypatch):
     """B3 + A5: mixed batch — verified + rejected items land in their own
     buckets; unverifiable stays empty when nothing exhibits the

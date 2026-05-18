@@ -16,11 +16,14 @@ Verification ladder (first match wins):
 If verification_rate < 0.7 across the batch, flag for review.
 
 Feature flags (env vars):
-  FACT_CHECKER_V2=0           disable v2 normalization + JS-domain shortcut
-  FACT_CHECKER_FUZZY_THRESHOLD=0.78  override tier-3 acceptance ratio
+  FACT_CHECKER_V2=0                   disable v2 normalization + JS-domain shortcut
+  FACT_CHECKER_FUZZY_THRESHOLD=0.78   override tier-3 acceptance ratio
+  FACT_CHECKER_BATCH_PREFETCH=0       disable the B4 concurrent prefetch path
+                                      (rare — needed only for sync-only tests)
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from collections import Counter
 from dataclasses import dataclass
@@ -58,6 +61,19 @@ _V2_ENABLED = os.environ.get("FACT_CHECKER_V2", "1").lower() not in ("0", "false
 # to disable. Threshold drawn from `improvements-plan.md` A5.
 _LCS_FLOOR = float(os.environ.get("FACT_CHECKER_LCS_FLOOR", "0.92"))
 _LCS_FLOOR_FUZZY = float(os.environ.get("FACT_CHECKER_LCS_FLOOR_FUZZY", "0.78"))
+
+# B4 (Plan B Phase 2): batch direct_web_fetch calls in parallel via a
+# thread pool BEFORE the classify loop. Cuts wall-clock on cold-cache runs
+# from O(N×fetch) to O(N/workers × fetch). Each item still goes through
+# the same _classify path; only the I/O is concurrent. Default ON; set
+# FACT_CHECKER_BATCH_PREFETCH=0 to revert to per-item sequential fetches.
+_BATCH_PREFETCH_ENABLED = (
+    os.environ.get("FACT_CHECKER_BATCH_PREFETCH", "1").lower()
+    not in ("0", "false", "no", "off")
+)
+_BATCH_PREFETCH_CONCURRENCY = int(
+    os.environ.get("FACT_CHECKER_BATCH_CONCURRENCY", "8")
+)
 
 # Tier-3 acceptance ratio. v1 used 0.85; v2 lowers to 0.78 but compensates with
 # a longer anchor head requirement so false-positive rate stays low.
@@ -238,6 +254,17 @@ class FactCheckerAgent(BaseAgent[FactCheckInput, FactCheckResult]):
         # A4: per-domain stats for diagnostics
         per_domain: dict[str, Counter] = {}
 
+        # B4: parallel pre-fetch of all non-JS-heavy URLs. Each entry is
+        # either a FetchResult, an Exception (for httpx errors → source_dead
+        # path), or absent (fall back to a sync fetch in the loop). JS-heavy
+        # URLs are intentionally NOT pre-fetched — they go through the Haiku
+        # path in the loop below.
+        prefetched = _batch_prefetch_urls(
+            payload.items,
+            use_cache=payload.use_cache,
+            can_js_fallback=can_js_fallback,
+        )
+
         for ev in payload.items:
             checked_at = datetime.now(timezone.utc)
             url = str(ev.source_url)
@@ -269,17 +296,36 @@ class FactCheckerAgent(BaseAgent[FactCheckInput, FactCheckResult]):
                 # below so we still get a source_dead vs unverifiable signal.
 
             if outcome is None:
-                try:
-                    resp = direct_web_fetch(url, use_cache=payload.use_cache)
-                except (httpx.RequestError, httpx.HTTPStatusError) as exc:
-                    ctx.logger.warning("source_dead %s: %s", ev.source_url, exc)
-                    ver = Verification(
-                        status="source_dead", method="url_404", checked_at=checked_at
-                    )
-                    verified_items.append(_attach(ev, ver))
-                    source_dead += 1
-                    domain_counter["source_dead"] += 1
-                    continue
+                # B4: prefer the pre-fetched result (parallel batch) when
+                # available. Falls back to a synchronous direct_web_fetch
+                # only if the batch was disabled or the URL was skipped
+                # (e.g. JS-heavy path that flowed through to here).
+                pre = prefetched.get(url) if prefetched else None
+                if pre is not None:
+                    if isinstance(pre, Exception):
+                        ctx.logger.warning("source_dead %s: %s", ev.source_url, pre)
+                        ver = Verification(
+                            status="source_dead", method="url_404",
+                            checked_at=checked_at,
+                        )
+                        verified_items.append(_attach(ev, ver))
+                        source_dead += 1
+                        domain_counter["source_dead"] += 1
+                        continue
+                    resp = pre
+                else:
+                    try:
+                        resp = direct_web_fetch(url, use_cache=payload.use_cache)
+                    except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                        ctx.logger.warning("source_dead %s: %s", ev.source_url, exc)
+                        ver = Verification(
+                            status="source_dead", method="url_404",
+                            checked_at=checked_at,
+                        )
+                        verified_items.append(_attach(ev, ver))
+                        source_dead += 1
+                        domain_counter["source_dead"] += 1
+                        continue
 
                 if resp.status >= 400:
                     ver = Verification(
@@ -402,3 +448,67 @@ def fact_check_items(
     return FactCheckerAgent().run(
         FactCheckInput(items=list(items), use_cache=use_cache), ctx
     )
+
+
+def _batch_prefetch_urls(
+    items: Sequence[EvidenceItem],
+    *,
+    use_cache: bool,
+    can_js_fallback: bool,
+) -> dict[str, "object"]:
+    """Pre-fetch all eligible URLs concurrently via a thread pool.
+
+    Returns a dict ``url → FetchResult | Exception``. URLs that flow
+    through the Haiku JS path are intentionally absent — the caller
+    handles them in the main loop. Exceptions are captured rather than
+    raised so the per-item ``source_dead`` accounting still reflects the
+    correct host.
+
+    Concurrency uses ``asyncio.to_thread`` on the existing sync
+    ``direct_web_fetch`` so monkeypatches in unit tests still apply (the
+    name is resolved lazily from this module's globals at call time).
+    """
+    if not _BATCH_PREFETCH_ENABLED or len(items) <= 1:
+        return {}
+
+    # Dedup by URL — same source cited by multiple items only needs one fetch.
+    targets: list[str] = []
+    seen: set[str] = set()
+    for ev in items:
+        url = str(ev.source_url)
+        if url in seen:
+            continue
+        seen.add(url)
+        # JS-heavy hosts skip the direct fetch entirely when the Haiku
+        # fallback is available; mirror that here so we don't burn an HTTP
+        # round-trip on a page we know returns a skeleton.
+        if _V2_ENABLED and _is_js_heavy(url) and can_js_fallback:
+            continue
+        targets.append(url)
+
+    if not targets:
+        return {}
+
+    async def _gather() -> dict[str, object]:
+        sem = asyncio.Semaphore(_BATCH_PREFETCH_CONCURRENCY)
+
+        async def _one(url: str):
+            async with sem:
+                try:
+                    # ``direct_web_fetch`` resolves via module globals at
+                    # call time — supports test monkeypatching naturally.
+                    return url, await asyncio.to_thread(
+                        direct_web_fetch, url, use_cache=use_cache,
+                    )
+                except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                    return url, exc
+
+        pairs = await asyncio.gather(*[_one(u) for u in targets])
+        return dict(pairs)
+
+    try:
+        return asyncio.run(_gather())
+    except RuntimeError:
+        # Already inside an event loop (rare — Streamlit + async CLI hybrid).
+        # Fall back to empty dict; the caller loop will fetch sequentially.
+        return {}
