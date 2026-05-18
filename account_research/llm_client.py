@@ -522,6 +522,28 @@ def _unwrap_tool_input(input_dict: Any, schema_name: str) -> Any:
                 or sole_key in _GENERIC_WRAP_KEYS):
             input_dict = next(iter(input_dict.values()))
 
+    # Pattern 4: leaked $<ALL_CAPS_UNDERSCORE> keys that appear as siblings of
+    # the real schema fields (e.g. `{"$FUNCTION_NAME": "emit_briefdata",
+    # "entity_id": ..., "hero": {...}}`). Pydantic with extra="forbid" would
+    # reject the whole payload; scrub these leaks before validation. We only
+    # strip when the value is a scalar (str/int/float/bool/None) — a dict
+    # value would have been handled by Pattern 1 above, and stripping a dict
+    # would lose data if Pattern 1 missed it.
+    if isinstance(input_dict, dict):
+        leaked = [
+            k for k, v in input_dict.items()
+            if _DOLLAR_PLACEHOLDER_RE.match(k)
+            and not isinstance(v, (dict, list))
+        ]
+        if leaked:
+            logger.warning(
+                "LLM output: stripping %d leaked schema-placeholder key(s) "
+                "from top level (schema=%s, keys=%s). The model emitted them "
+                "as siblings of real fields instead of a wrapper.",
+                len(leaked), schema_name, leaked,
+            )
+            input_dict = {k: v for k, v in input_dict.items() if k not in leaked}
+
     return input_dict
 
 

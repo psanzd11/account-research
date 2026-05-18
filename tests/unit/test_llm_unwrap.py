@@ -126,6 +126,48 @@ def test_generic_wrap_keys_all_unwrap() -> None:
         )
 
 
+def test_dollar_placeholder_sibling_leak_is_stripped() -> None:
+    """`{"$FUNCTION_NAME": "emit_briefdata", "entity_id": ..., "hero": ...}`
+    — observed on the 2026-05-18 Atomic Fund run. The model leaked the tool
+    name as a SIBLING of the real fields (not as a wrapper). Pydantic with
+    extra='forbid' rejects the whole payload; the unwrap must strip the
+    leaked key while keeping the real fields."""
+    leaked = {
+        "$FUNCTION_NAME": "emit_briefdata",
+        "entity_id": "abc",
+        "hero": {"name": "Acme"},
+    }
+    out = _unwrap_tool_input(leaked, "BriefData")
+    assert "$FUNCTION_NAME" not in out
+    assert out["entity_id"] == "abc"
+    assert out["hero"] == {"name": "Acme"}
+
+
+def test_dollar_placeholder_with_dict_value_not_stripped_as_sibling() -> None:
+    """If `$XYZ`'s value is a dict, leave it (Pattern 1 above handles the
+    wrap case; stripping a dict here would lose data)."""
+    payload = {
+        "$NESTED": {"keep": "me"},
+        "entity_id": "abc",
+    }
+    out = _unwrap_tool_input(payload, "BriefData")
+    assert "$NESTED" in out  # untouched
+
+
+def test_multiple_dollar_placeholder_siblings_all_stripped(caplog) -> None:
+    import logging
+    payload = {
+        "$FUNCTION_NAME": "emit_x",
+        "$TOOL_NAME": "x",
+        "entity_id": "abc",
+    }
+    with caplog.at_level(logging.WARNING, logger="account_research.llm_client"):
+        out = _unwrap_tool_input(payload, "BriefData")
+    assert out == {"entity_id": "abc"}
+    # Warning should mention how many were stripped.
+    assert any("stripping 2" in r.message for r in caplog.records)
+
+
 def test_unrelated_single_key_is_not_unwrapped() -> None:
     """A real field named `entity` is not stripped, even if it's the only key."""
     payload = {"entity": {"id": "abc", "name": "Test"}}
