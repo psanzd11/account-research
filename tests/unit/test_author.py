@@ -36,6 +36,15 @@ class _FakeLLM:
         return self.canned
 
 
+def _user_text(captured: dict) -> str:
+    """Flatten messages[0].content (now a list of text blocks for cache_control)
+    back into a single string for substring assertions."""
+    content = captured["messages"][0]["content"]
+    if isinstance(content, str):
+        return content
+    return "\n".join(b.get("text", "") for b in content if b.get("type") == "text")
+
+
 def _ev(entity_id, claim, raw_quote=None, url="https://x.test/p") -> VerifiedEvidenceItem:
     return VerifiedEvidenceItem(
         entity_id=entity_id,
@@ -87,7 +96,7 @@ def test_filters_non_acceptable_items_from_prompt():
         AuthorInput(entity=entity, ledger=[ev_verified, ev_unverif], estimates=[]),
         ctx,
     )
-    user_content = fake.captured["messages"][0]["content"]
+    user_content = _user_text(fake.captured)
     assert str(ev_verified.id) in user_content
     assert str(ev_unverif.id) not in user_content
 
@@ -122,7 +131,7 @@ def test_tier1_high_unverifiable_item_is_included():
         AuthorInput(entity=entity, ledger=[ev_fallback], estimates=[]),
         PipelineContext(llm_client=fake),
     )
-    user_content = fake.captured["messages"][0]["content"]
+    user_content = _user_text(fake.captured)
     assert str(ev_fallback.id) in user_content
 
 
@@ -184,7 +193,7 @@ def test_raw_quote_truncation_at_500_chars():
         AuthorInput(entity=entity, ledger=[ev], estimates=[]),
         PipelineContext(llm_client=fake),
     )
-    content = fake.captured["messages"][0]["content"]
+    content = _user_text(fake.captured)
     # First 500 chars must be present; v1's 240-char cut should NOT be the limit
     assert "A" * 400 in content
     # Should have at least 500 consecutive characters from the quote
@@ -283,7 +292,7 @@ def test_revision_prompt_includes_previous_weak_citations():
         ),
         PipelineContext(llm_client=fake),
     )
-    content = fake.captured["messages"][0]["content"]
+    content = _user_text(fake.captured)
     assert "Semantic validator" in content or "semantic validator" in content
     assert "missing_token_overlap" in content
 

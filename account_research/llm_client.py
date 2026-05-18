@@ -70,7 +70,7 @@ class LLMClient:
         self,
         *,
         model: str,
-        system: str,
+        system: str | list[dict],
         messages: list[dict],
         tools: list[dict] | None = None,
         tool_choice: dict | None = None,
@@ -78,7 +78,14 @@ class LLMClient:
         temperature: float | None = 0.0,
         agent: str = "unknown",
     ) -> anthropic.types.Message:
-        """Raw completion. Returns the SDK Message. Caller handles content blocks."""
+        """Raw completion. Returns the SDK Message. Caller handles content blocks.
+
+        ``system`` accepts either a plain string or a list of content blocks
+        (e.g. ``[{"type": "text", "text": "...", "cache_control": {"type":
+        "ephemeral"}}]``). The block form unlocks prompt caching on the system
+        prompt — used by Author / Reviewer to avoid re-billing the static
+        instructions on every revision iteration.
+        """
         return self._call_with_retry(
             model=model,
             system=system,
@@ -94,7 +101,7 @@ class LLMClient:
         self,
         *,
         model: str,
-        system: str,
+        system: str | list[dict],
         messages: list[dict],
         schema: Type[T],
         schema_description: str | None = None,
@@ -212,7 +219,7 @@ class LLMClient:
         self,
         *,
         model: str,
-        system: str,
+        system: str | list[dict],
         messages: list[dict],
         tools: list[dict] | None,
         tool_choice: dict | None,
@@ -243,6 +250,11 @@ class LLMClient:
             try:
                 response = self._client.messages.create(**kwargs)
                 elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000
+                # Anthropic returns cache_read / cache_creation token counts
+                # only when cache_control blocks are present. Default to 0
+                # when the field is absent (older SDKs) or None.
+                cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
+                cache_creation = getattr(response.usage, "cache_creation_input_tokens", 0) or 0
                 self._write_trace(
                     call_id=call_id,
                     agent=agent,
@@ -251,6 +263,8 @@ class LLMClient:
                     elapsed_ms=elapsed_ms,
                     input_tokens=response.usage.input_tokens,
                     output_tokens=response.usage.output_tokens,
+                    cache_read_input_tokens=cache_read,
+                    cache_creation_input_tokens=cache_creation,
                     stop_reason=response.stop_reason,
                     error=None,
                 )
@@ -269,6 +283,8 @@ class LLMClient:
                         elapsed_ms=(time.perf_counter_ns() - start_ns) / 1_000_000,
                         input_tokens=0,
                         output_tokens=0,
+                        cache_read_input_tokens=0,
+                        cache_creation_input_tokens=0,
                         stop_reason=None,
                         error=f"{type(exc).__name__}: {exc}",
                     )
@@ -293,6 +309,8 @@ class LLMClient:
             elapsed_ms=(time.perf_counter_ns() - start_ns) / 1_000_000,
             input_tokens=0,
             output_tokens=0,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
             stop_reason=None,
             error=f"exhausted retries: {last_exc}",
         )
@@ -309,6 +327,8 @@ class LLMClient:
         elapsed_ms: float,
         input_tokens: int,
         output_tokens: int,
+        cache_read_input_tokens: int = 0,
+        cache_creation_input_tokens: int = 0,
         stop_reason: str | None,
         error: str | None,
     ) -> None:
@@ -323,6 +343,8 @@ class LLMClient:
             "elapsed_ms": round(elapsed_ms, 1),
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "cache_read_input_tokens": cache_read_input_tokens,
+            "cache_creation_input_tokens": cache_creation_input_tokens,
             "stop_reason": stop_reason,
             "error": error,
         }

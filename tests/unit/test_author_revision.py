@@ -23,6 +23,15 @@ class _FakeLLM:
         return self.canned
 
 
+def _user_text(captured: dict) -> str:
+    """Flatten messages[0].content (list of text blocks for cache_control)
+    back into a single string for substring assertions."""
+    content = captured["messages"][0]["content"]
+    if isinstance(content, str):
+        return content
+    return "\n".join(b.get("text", "") for b in content if b.get("type") == "text")
+
+
 def _make_brief(eid):
     return BriefData(
         entity_id=eid,
@@ -39,7 +48,7 @@ def test_no_revision_block_when_no_previous_brief():
         AuthorInput(entity=entity, ledger=[], estimates=[]),
         PipelineContext(llm_client=fake),
     )
-    user_content = fake.captured["messages"][0]["content"]
+    user_content = _user_text(fake.captured)
     assert "REVISION MODE" not in user_content
 
 
@@ -58,7 +67,7 @@ def test_revision_block_present_with_previous_brief_and_issues():
                     iteration=2),
         PipelineContext(llm_client=fake),
     )
-    user_content = fake.captured["messages"][0]["content"]
+    user_content = _user_text(fake.captured)
     assert "REVISION MODE (iteration 2)" in user_content
     assert "No method_id traces to this badge" in user_content
     assert "critical" in user_content
@@ -77,5 +86,5 @@ def test_revision_block_absent_when_only_one_of_previous_or_issues():
                     iteration=2),
         PipelineContext(llm_client=fake),
     )
-    user_content = fake.captured["messages"][0]["content"]
+    user_content = _user_text(fake.captured)
     assert "REVISION MODE" not in user_content

@@ -291,7 +291,13 @@ class AuthorAgent(BaseAgent[AuthorInput, BriefData]):
                 f"{weak_block}"
             )
 
-        user_msg = (
+        # Split the user message into a STABLE prefix (entity + ledger +
+        # estimates) and a DYNAMIC suffix (revision block + final
+        # instruction). Anthropic prompt-caching matches on the prefix up to
+        # the `cache_control` marker, so we mark the stable block as cacheable
+        # and keep iteration-specific content out of it. On iter 2+ the ledger
+        # (often 5K+ tokens) is served from cache at ~10% of the input price.
+        stable_user_text = (
             f"Entity:\n"
             f"  entity_id: {payload.entity.id}\n"
             f"  name: {payload.entity.name}\n"
@@ -301,15 +307,33 @@ class AuthorAgent(BaseAgent[AuthorInput, BriefData]):
             f"{json.dumps(ledger_payload, ensure_ascii=False, indent=2)}\n\n"
             f"Estimates available ({len(estimates_payload)}):\n"
             f"{json.dumps(estimates_payload, ensure_ascii=False, indent=2)}\n"
+        )
+        dynamic_user_text = (
             f"{revision_block}\n"
             "Author the BriefData now. Every text-bearing field must cite "
             "evidence_ids from the ledger above. Use exact UUIDs."
         )
 
+        user_content: list[dict] = [
+            {
+                "type": "text",
+                "text": stable_user_text,
+                "cache_control": {"type": "ephemeral"},
+            },
+            {"type": "text", "text": dynamic_user_text},
+        ]
+        system_blocks: list[dict] = [
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            },
+        ]
+
         brief = llm.complete_with_json(
             model=self.model,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
+            system=system_blocks,
+            messages=[{"role": "user", "content": user_content}],
             schema=BriefData,
             max_tokens=16384,
             temperature=0.0,

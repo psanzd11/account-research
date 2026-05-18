@@ -222,22 +222,35 @@ class ReviewerAgent(BaseAgent[ReviewInput, ReviewerReport]):
                 f"{json.dumps(payload.weak_citations, ensure_ascii=False, indent=2)}\n"
             )
 
-        user_text = (
-            f"Iteration: {payload.iteration}\n"
-            f"PDF path: {payload.pdf_path}\n\n"
-            f"=== Author BriefData (JSON) ===\n"
-            f"{payload.brief.model_dump_json(indent=2)}\n\n"
+        # The ledger + estimates are STABLE across revision iterations for a
+        # given entity — split them into their own text block and mark it
+        # cacheable. Brief JSON + PDF text + iteration-specific feedback
+        # change per iter, so they go into a separate non-cached block.
+        stable_text = (
             f"=== Evidence Ledger ({len(ledger_payload)} items) ===\n"
             f"{json.dumps(ledger_payload, ensure_ascii=False, indent=2)}\n\n"
             f"=== Estimates ({len(estimates_payload)}) ===\n"
             f"{json.dumps(estimates_payload, ensure_ascii=False, indent=2)}\n"
+        )
+        dynamic_text = (
+            f"Iteration: {payload.iteration}\n"
+            f"PDF path: {payload.pdf_path}\n\n"
+            f"=== Author BriefData (JSON) ===\n"
+            f"{payload.brief.model_dump_json(indent=2)}\n"
             f"{weak_block}\n"
             f"=== Rendered PDF Text ===\n"
             f"{pdf_text}\n\n"
             "Review the PDF against the ledger. Call emit_reviewerreport."
         )
 
-        content: list[dict] = [{"type": "text", "text": user_text}]
+        content: list[dict] = [
+            {
+                "type": "text",
+                "text": stable_text,
+                "cache_control": {"type": "ephemeral"},
+            },
+            {"type": "text", "text": dynamic_text},
+        ]
         if effective_use_vision:
             # Attach page images so the model can see layout issues text-extraction misses
             try:
@@ -252,9 +265,16 @@ class ReviewerAgent(BaseAgent[ReviewInput, ReviewerReport]):
                     exc,
                 )
 
+        system_blocks: list[dict] = [
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            },
+        ]
         report = llm.complete_with_json(
             model=self.model,
-            system=SYSTEM_PROMPT,
+            system=system_blocks,
             messages=[{"role": "user", "content": content}],
             schema=ReviewerReport,
             max_tokens=8192,

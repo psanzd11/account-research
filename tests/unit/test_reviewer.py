@@ -247,7 +247,11 @@ def test_weak_citations_appear_in_user_prompt(monkeypatch, tmp_path):
                     pdf_path=str(pdf), iteration=1, weak_citations=weak),
         PipelineContext(llm_client=fake),
     )
-    user_text = fake.captured["messages"][0]["content"][0]["text"]
+    # Reviewer splits user content into two text blocks (stable ledger
+    # cached + dynamic with brief/PDF/weak_citations). Flatten before
+    # asserting on substrings.
+    blocks = fake.captured["messages"][0]["content"]
+    user_text = "\n".join(b.get("text", "") for b in blocks if b.get("type") == "text")
     assert "Semantic Validator Flags" in user_text
     assert "drifted prose" in user_text
 

@@ -121,8 +121,15 @@ def test_one_repass_when_weak_citation_then_clean():
     )
     # Final brief is the clean one
     assert out.quick_take.body == clean.quick_take.body
-    # Re-pass prompt should mention semantic validator
-    second_prompt = fake.calls[1]["messages"][0]["content"]
+    # Re-pass prompt should mention semantic validator. Content is now a
+    # list of cache-control text blocks; flatten before searching.
+    second_content = fake.calls[1]["messages"][0]["content"]
+    if isinstance(second_content, str):
+        second_prompt = second_content
+    else:
+        second_prompt = "\n".join(
+            b.get("text", "") for b in second_content if b.get("type") == "text"
+        )
     assert (
         "semantic" in second_prompt.lower()
         or "weak citation" in second_prompt.lower()
