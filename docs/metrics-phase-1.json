@@ -1,0 +1,83 @@
+{
+  "captured_at": "2026-05-18T12:59:50+00:00",
+  "phase": 1,
+  "git_branch": "improvements/phase-1",
+  "git_commit_post": "8a07457",
+  "entity": {
+    "name": "Guillermo Jaime Calderón",
+    "type": "person",
+    "geo_hint": "Mexico",
+    "run_id": "92caf8b1-a317-49bd-b37b-2574369706e5",
+    "entity_id": "1942289b-f0ef-46cc-8fbf-3ec6b2f8534d"
+  },
+  "wall_clock_seconds": 862,
+  "wall_clock_window_utc": ["2026-05-18T12:45:04+00:00", "2026-05-18T12:59:26+00:00"],
+  "calls_total": 11,
+  "tokens": {
+    "prompt": 280917,
+    "completion": 67189,
+    "cache_read": 102081,
+    "cache_creation": 26490
+  },
+  "cost_usd_total": 6.8951,
+  "llm_elapsed_ms_total": 849343,
+  "reviewer": {
+    "iterations_completed": 3,
+    "final_status": "human_review_needed",
+    "notes": "Iter 1 → revision_required (Reviewer rigor flagged thin sections + aggregator dominance). Iter 2 + 3 same. Quality issue, not caching; Phase 2 A4/A5 target this."
+  },
+  "ledger": {
+    "total_items": 40,
+    "verified": 27,
+    "unverifiable": 4,
+    "source_dead": 9,
+    "verification_rate_pct": 67.5
+  },
+  "per_agent": {
+    "disambiguator": {"calls": 1, "in_tokens": 17652, "out_tokens": 1124,  "cache_read": 0,     "cache_write": 0,     "usd": 0.0698, "elapsed_ms": 23559},
+    "researcher":    {"calls": 1, "in_tokens": 168319,"out_tokens": 11809, "cache_read": 0,     "cache_write": 0,     "usd": 0.6821, "elapsed_ms": 156112},
+    "author":        {"calls": 6, "in_tokens": 55150, "out_tokens": 51467, "cache_read": 81835, "cache_write": 16367, "usd": 5.1169, "elapsed_ms": 609722},
+    "reviewer":      {"calls": 3, "in_tokens": 39796, "out_tokens": 2789,  "cache_read": 20246, "cache_write": 10123, "usd": 1.0263, "elapsed_ms": 59951}
+  },
+  "a1_cache_analysis": {
+    "cache_read_tokens": 102081,
+    "cache_creation_tokens": 26490,
+    "would_have_cost_without_caching_usd": 1.5312,
+    "actually_cost_with_caching_usd": 0.6498,
+    "net_savings_usd": 0.8814,
+    "savings_pct_of_author_reviewer_share": 14.3,
+    "verdict_pass": true,
+    "verdict_notes": "cache_read > 0 on Author iter 2+ and Reviewer iter 2+ (A1 mechanical acceptance). Net savings $0.88 on this 3-iter run; the savings_pct here is of the (Author+Reviewer) share ($6.14), not of total brief cost. Per-call costs unchanged on iter 1 (cache_write); savings concentrate on iter 2+."
+  },
+  "diff_vs_baseline": {
+    "baseline_run": "Guillermo Jaime Calderón, 2026-05-18 02:30 UTC, ledger.db pre-hotfix",
+    "baseline_cost_usd": 1.6589,
+    "post_cost_usd": 6.8951,
+    "delta_cost_usd": 5.2362,
+    "delta_cost_pct_naive": 315.64,
+    "interpretation": "DIRECT COST COMPARISON INVALID. Baseline run crashed in Author iter 1 (the $PARAMETER_VALUE wrap variant), so Reviewer never ran and there were 0 revision iterations. Post-Phase-1 run completed all 3 Author + 3 Reviewer iters end-to-end. The +315% surface delta reflects work-done, not regression. Apples-to-apples per-call: Author ~$0.85/call in both runs; cache savings only kick in iter 2+.",
+    "baseline_prompt_tokens": 215322,
+    "post_prompt_tokens": 280917,
+    "baseline_cache_read": 0,
+    "post_cache_read": 102081
+  },
+  "phase1_acceptance_results": {
+    "A1_cache_read_tokens_above_zero": {"target": "> 0", "actual": 102081, "pass": true},
+    "A1_cost_reduction_pct": {
+      "target": "≥15% per brief",
+      "measured_indirect": "$0.88 saved on Author+Reviewer share ($6.14) = 14.3%",
+      "pass": "partial",
+      "notes": "Can't measure clean per-brief delta because baseline crashed mid-Author. Cache mechanism verified; on a 3-iter run we recovered ~14% of the iteration cost via cache_read. The plan's '≥15%' target was for clean A/B; a fresh same-iter-count baseline would be needed for a hard pass."
+    },
+    "A2_vision_always_on": {"target": "no per-call toggle, env kill-switch only", "actual": "use_vision removed from ReviewInput and orchestrator; --vision flag removed from CLI; REVIEWER_VISION_ON_REVISION env governs", "pass": true},
+    "A3_orphan_evidence_id": {"target": "Designer aborts before PDF, orchestrator revises Author", "actual": "OrphanEvidenceError raised; orchestrator catches and loops with synthetic critical issue; tests cover both recovery and final-iter escalation paths", "pass": true}
+  },
+  "out_of_band_fixes": [
+    {
+      "commit": "8a07457",
+      "kind": "hotfix",
+      "title": "$PARAMETER_VALUE unwrap variant",
+      "why": "Baseline Author crash blocked a meaningful post-phase comparison. One-line allowlist extension + 1 new test."
+    }
+  ]
+}
