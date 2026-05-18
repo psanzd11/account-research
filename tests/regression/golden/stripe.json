@@ -1,0 +1,14 @@
+{
+  "entity_name": "Stripe, Inc.",
+  "brief_id": "456016fd-00c4-4188-9ecf-0551af96f93e",
+  "category": "public_us_company",
+  "thresholds": {
+    "n_stats": 4,
+    "n_industries": 6,
+    "n_geographic_footprint": 5,
+    "n_sources": 7,
+    "pct_text_fields_cited": 95.0,
+    "pct_stats_cited": 75.0,
+    "pct_badge_with_caveat": 100.0
+  }
+}

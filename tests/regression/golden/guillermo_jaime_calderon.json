@@ -1,0 +1,14 @@
+{
+  "entity_name": "Guillermo Jaime Calderón",
+  "brief_id": "7a122d32-405f-448e-bf0d-750efdb8ab3f",
+  "category": "private_latam_person",
+  "thresholds": {
+    "n_stats": 3,
+    "n_industries": 4,
+    "n_geographic_footprint": 3,
+    "n_sources": 3,
+    "pct_text_fields_cited": 90.0,
+    "pct_stats_cited": 75.0,
+    "pct_badge_with_caveat": 100.0
+  }
+}

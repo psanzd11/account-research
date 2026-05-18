@@ -1,0 +1,14 @@
+{
+  "entity_name": "MercadoLibre, Inc.",
+  "brief_id": "64354cf0-34f4-46b4-b777-df58e5ba0db9",
+  "category": "public_latam_company",
+  "thresholds": {
+    "n_stats": 4,
+    "n_industries": 5,
+    "n_geographic_footprint": 5,
+    "n_sources": 7,
+    "pct_text_fields_cited": 95.0,
+    "pct_stats_cited": 75.0,
+    "pct_badge_with_caveat": 100.0
+  }
+}

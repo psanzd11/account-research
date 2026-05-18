@@ -1,0 +1,98 @@
+id: consulting_firm_revenue_v1
+applies_to: company
+metric: estimated_annual_revenue
+unit: USD/year
+output_type: range
+
+description: >
+  Estimates annual revenue for a private consulting firm
+  (PM, strategy, implementation services) when no public disclosure exists.
+
+required_signals:
+  - signal: years_in_operation
+    type: number
+    source: ledger.evidence where claim contains "founded" or "established"
+    weight: 0.15
+
+  - signal: project_count
+    type: number
+    description: Total projects delivered (often a marketing claim)
+    source: ledger.evidence where claim contains "projects" with numeric value
+    weight: 0.30
+    notes: Marketing claims may be inflated; apply 0.7 discount factor.
+
+  - signal: headcount_estimate
+    type: number
+    source: ledger.evidence where category=team or social_following / 50
+    weight: 0.30
+    notes: For very small consultancies, Instagram/LinkedIn follower count / 50 is a rough headcount proxy.
+
+  - signal: geographic_scope
+    type: enum
+    values: [single_city, single_country, multi_country, global]
+    source: ledger.evidence where category=geography
+    weight: 0.10
+
+  - signal: strategic_partnerships
+    type: number
+    description: Named partner relationships (SaaS, training authorizations, OEM)
+    source: ledger.evidence where claim contains "partner" or "authorized"
+    weight: 0.15
+
+minimum_required_signals: 3
+
+computation:
+  # Anchored to LATAM PM consultancy benchmarks
+  base_per_project_usd: [30_000, 60_000]
+  base_per_headcount_usd: [80_000, 150_000]  # revenue per FTE typical
+  geographic_multipliers:
+    single_city: 1.0
+    single_country: 1.2
+    multi_country: 1.5
+    global: 2.0
+  partnership_multiplier_per: 1.1  # each named partner adds 10%
+
+  formula: |
+    # Effective project count (apply discount to marketing claims)
+    effective_projects = project_count * 0.7
+
+    # Project-based revenue (lifetime / years_in_operation = annual)
+    annual_from_projects_low = effective_projects * 30000 / years_in_operation
+    annual_from_projects_high = effective_projects * 60000 / years_in_operation
+
+    # Headcount-based revenue (cross-check)
+    annual_from_headcount_low = headcount * 80000
+    annual_from_headcount_high = headcount * 150000
+
+    # Take midpoint of the two cross-checks
+    annual_low = (annual_from_projects_low + annual_from_headcount_low) / 2
+    annual_high = (annual_from_projects_high + annual_from_headcount_high) / 2
+
+    # Apply geographic multiplier
+    annual_low *= geographic_multipliers[geographic_scope]
+    annual_high *= geographic_multipliers[geographic_scope]
+
+    # Apply partnership multiplier
+    multiplier = partnership_multiplier_per ** strategic_partnerships
+    annual_low *= multiplier
+    annual_high *= multiplier
+
+confidence_rule:
+  - if: signals_present >= 4 and headcount_estimate >= 5
+    confidence: medium
+  - if: signals_present >= 3
+    confidence: low
+  - else:
+    confidence: null
+
+caveat_template: >
+  Estimated from {years_in_operation} yrs operation, {project_count} projects
+  (discounted by 30% for marketing inflation), ~{headcount_estimate} headcount,
+  and {geographic_scope} reach. Privately held; not publicly disclosed.
+
+notes: |
+  This recipe was designed in response to the BWPM v0 failure where revenue was
+  estimated at "$1-3M USD/yr" with no methodology. The numbers below are anchored
+  to actual LATAM PM consultancy benchmarks (2024-2025 surveys).
+  Discount factor for project counts (0.7) reflects that companies tend to count
+  every engagement, including very small ones, in their marketing.

@@ -1,0 +1,14 @@
+{
+  "entity_name": "Marcos Galperin",
+  "brief_id": "7fbec7c2-58c3-4791-922d-0f733c24cabb",
+  "category": "public_latam_person",
+  "thresholds": {
+    "n_stats": 4,
+    "n_industries": 5,
+    "n_geographic_footprint": 4,
+    "n_sources": 6,
+    "pct_text_fields_cited": 95.0,
+    "pct_stats_cited": 75.0,
+    "pct_badge_with_caveat": 100.0
+  }
+}

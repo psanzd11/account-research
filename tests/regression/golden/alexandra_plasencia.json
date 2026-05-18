@@ -1,0 +1,14 @@
+{
+  "entity_name": "Alexandra Plasencia",
+  "brief_id": "3108f026-08b4-476d-8574-058a7e955eb3",
+  "category": "private_latam_person",
+  "thresholds": {
+    "n_stats": 3,
+    "n_industries": 3,
+    "n_geographic_footprint": 2,
+    "n_sources": 3,
+    "pct_text_fields_cited": 90.0,
+    "pct_stats_cited": 75.0,
+    "pct_badge_with_caveat": 100.0
+  }
+}

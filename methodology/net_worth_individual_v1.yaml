@@ -1,0 +1,77 @@
+id: net_worth_individual_v1
+applies_to: person
+metric: estimated_net_worth
+unit: USD
+output_type: range  # always a range, never point
+
+description: >
+  Estimates an individual's net worth from indirect public signals.
+  Used only when no public disclosure exists.
+
+required_signals:
+  - signal: years_executive_experience
+    type: number
+    source: ledger.evidence where category=leadership
+    weight: 0.15
+
+  - signal: companies_founded
+    type: number
+    source: ledger.evidence where category=leadership and claim contains "founder"
+    weight: 0.30
+
+  - signal: ypo_or_equivalent_membership
+    type: boolean
+    description: YPO, Vistage, EO, or similar — implies $10M+ revenue company
+    source: ledger.evidence where claim contains any of [YPO, Vistage, EO]
+    weight: 0.25
+
+  - signal: public_company_role
+    type: boolean
+    description: Currently or formerly C-level at a public company
+    source: ledger.evidence where category=leadership and source_type=sec_filing
+    weight: 0.20
+
+  - signal: known_exits
+    type: array
+    description: Documented company sales/M&A involving the person
+    source: ledger.evidence where claim contains "sold" or "acquired" with the person as principal
+    weight: 0.10
+
+minimum_required_signals: 3  # below this → return null, status=insufficient_signals
+
+computation:
+  base_range_usd: [1_000_000, 5_000_000]
+  multipliers:
+    - if: companies_founded >= 3
+      multiply_low_by: 2
+      multiply_high_by: 3
+    - if: ypo_or_equivalent_membership == true
+      multiply_low_by: 1.5
+      multiply_high_by: 2
+    - if: public_company_role == true
+      add_low: 5_000_000
+      add_high: 20_000_000
+    - if: known_exits.length >= 1
+      add_low: 3_000_000
+      add_high: 15_000_000
+    - if: years_executive_experience >= 20
+      multiply_low_by: 1.2
+      multiply_high_by: 1.5
+
+confidence_rule:
+  - if: signals_present >= 5
+    confidence: medium
+  - if: signals_present >= 3
+    confidence: low
+  - else:
+    confidence: null  # do not output
+
+caveat_template: >
+  Estimated from {signals_summary}. Privately held / not publicly disclosed.
+  This is an order-of-magnitude estimate based on indirect signals, not a financial assessment.
+
+# Notes for maintainers
+notes: |
+  - Add new versioned recipe (e.g., net_worth_individual_v2) rather than editing this one.
+  - Multipliers were calibrated against 12 publicly-disclosed reference cases in 2025.
+  - Re-calibrate annually as market conditions shift.

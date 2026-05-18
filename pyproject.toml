@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "account-research-agents"
+version = "0.1.0"
+description = "Multi-agent pipeline that produces citation-grounded PDF research briefs"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[tool.setuptools]
+packages = ["account_research", "account_research.schemas", "account_research.agents", "account_research.tools", "account_research.methodology", "account_research.methodology.recipes"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = "requirements.txt"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: tests that hit external services or run the full pipeline",
+]

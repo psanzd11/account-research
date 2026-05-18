@@ -1,0 +1,59 @@
+# Ground-truth anchors for regression scoring.
+#
+# Used by scripts/regression_score.py to verify the pipeline still hits
+# Round-2 acceptance bars (≥70% hero confidence medium, ≥2 Tier-1 sources per
+# required category, ≤30% aggregator share).
+#
+# Anchors are chosen because:
+#   - They have Wikipedia / SEC / major-press coverage we can verify against
+#   - They span entity_type (company + person) and geography (US, LATAM)
+#   - The pipeline has run them before so we have baseline numbers
+#
+# `revenue_range` is in USD; intervals are intentionally wide to accept any
+# defensible estimate. The point is to catch order-of-magnitude misses
+# (Stripe-class $100M vs $20B failure), not to demand pinpoint accuracy.
+
+entities:
+
+  - name: "Stripe"
+    entity_type: "company"
+    query: "Stripe"
+    geo: "United States"
+    wikipedia: "https://en.wikipedia.org/wiki/Stripe,_Inc."
+    expected:
+      revenue_range_usd: [5_000_000_000, 20_000_000_000]
+      revenue_confidence_min: "medium"     # public-disclosure should hit HIGH
+      industry: "payments"
+      tier1_sources_minimum: 4
+      aggregator_share_max: 0.30
+      verification_rate_min: 0.65
+      industries_chips_minimum: 3
+
+  - name: "Mercado Libre"
+    entity_type: "company"
+    query: "Mercado Libre"
+    geo: "Argentina"
+    wikipedia: "https://en.wikipedia.org/wiki/Mercado_Libre"
+    expected:
+      # 2024 actual ~$21B; 2025 reported ~$28.9B. Range covers both years.
+      revenue_range_usd: [18_000_000_000, 35_000_000_000]
+      revenue_confidence_min: "medium"
+      industry: "marketplace"
+      tier1_sources_minimum: 4
+      aggregator_share_max: 0.30
+      # SEC blocks gov-class HTTP requests on this entity in our environment,
+      # producing source_dead on EDGAR URLs. Floor accordingly.
+      verification_rate_min: 0.50
+      industries_chips_minimum: 3
+
+  - name: "Marcos Galperin"
+    entity_type: "person"
+    query: "Marcos Galperin"
+    geo: "Argentina"
+    wikipedia: "https://en.wikipedia.org/wiki/Marcos_Galperin"
+    expected:
+      net_worth_range_usd: [3_000_000_000, 15_000_000_000]
+      net_worth_confidence_min: "low"     # Forbes-class disclosed wealth — at least LOW
+      tier1_sources_minimum: 3
+      aggregator_share_max: 0.30
+      verification_rate_min: 0.65

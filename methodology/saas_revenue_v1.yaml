@@ -1,0 +1,83 @@
+id: saas_revenue_v1
+applies_to: company
+metric: estimated_annual_revenue
+unit: USD/year
+output_type: range
+
+description: >
+  Estimates ARR for a private SaaS company from headcount, customer count,
+  pricing tiers, and funding signals. Used only when no public disclosure
+  exists.
+
+required_signals:
+  - signal: years_active
+    type: number
+    source: ledger.evidence where claim contains "founded" or "launched"
+    weight: 0.10
+
+  - signal: headcount_estimate
+    type: number
+    description: Total employees. Best signal we have for ARR.
+    source: ledger.evidence where category=team or claim contains "employees" with a number
+    weight: 0.40
+
+  - signal: customer_count_estimate
+    type: number
+    description: Paying customers or accounts (often quoted as "X+ customers")
+    source: ledger.evidence where claim contains "customers" or "users" with a number
+    weight: 0.20
+
+  - signal: pricing_tier_avg_usd
+    type: number
+    description: Avg published price per seat/month. Multiplied by 12 in formula.
+    source: ledger.evidence where claim contains "pricing" or "per user/month"
+    weight: 0.15
+
+  - signal: funding_raised_usd
+    type: number
+    description: "Total disclosed funding. VC math: ARR is roughly 1/3 to 1/2 of total raised."
+    source: ledger.evidence where claim contains "raised" or "Series" with USD amount
+    weight: 0.15
+
+minimum_required_signals: 3
+
+computation:
+  # Anchored to 2024-2025 SaaS benchmarks
+  revenue_per_fte_usd: [120_000, 220_000]   # SaaS-specific; higher than consulting
+  funding_to_arr_ratio: [0.30, 0.50]        # Common rule of thumb in venture math
+
+  formula: |
+    # Cross-check approach: take whichever evidence is strongest.
+    # Headcount × revenue/FTE is the most reliable when present.
+    if headcount_estimate and headcount_estimate >= 5:
+        annual_low  = headcount_estimate * 120_000
+        annual_high = headcount_estimate * 220_000
+    elif funding_raised_usd:
+        annual_low  = funding_raised_usd * 0.30
+        annual_high = funding_raised_usd * 0.50
+    elif customer_count_estimate and pricing_tier_avg_usd:
+        annual_low  = customer_count_estimate * pricing_tier_avg_usd * 12 * 0.6
+        annual_high = customer_count_estimate * pricing_tier_avg_usd * 12 * 1.0
+    else:
+        return InsufficientSignals
+
+confidence_rule:
+  - if: signals_present >= 4 and headcount_estimate
+    confidence: medium
+  - if: signals_present >= 3
+    confidence: low
+  - else:
+    confidence: null
+
+caveat_template: >
+  Estimated from ~{headcount_estimate} headcount, {customer_count_estimate}
+  customers, and ${funding_raised_usd} in disclosed funding.
+  SaaS benchmark: $120-220K revenue per FTE (2024 surveys).
+  Privately held; not publicly disclosed.
+
+notes: |
+  The headcount × revenue/FTE method is the most reliable for SaaS — public
+  ARR/employee data exists for hundreds of companies. Funding-to-ARR is a
+  rough check (a company that raised $50M typically has $15-25M ARR).
+  Customer-count × pricing tends to over-estimate (free tiers, churn, discounts)
+  so we discount by 0.6-1.0.

@@ -1,0 +1,16 @@
+{
+  "entity_name": "BW Project Management",
+  "brief_id": "d2dd24b1-3911-4e91-adf9-37411bd2e089",
+  "category": "private_latam_company",
+  "needs_refresh": true,
+  "needs_refresh_reason": "Brief was generated before BriefData schema tightened (quick_take.body >600 chars, dna_cards/who_they_are/discovery_questions exceed max). Re-run pipeline post-Sprint-1 to refresh.",
+  "thresholds": {
+    "n_stats": 3,
+    "n_industries": 3,
+    "n_geographic_footprint": 1,
+    "n_sources": 6,
+    "pct_text_fields_cited": 85.0,
+    "pct_stats_cited": 50.0,
+    "pct_badge_with_caveat": 100.0
+  }
+}

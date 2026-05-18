@@ -1,0 +1,36 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Runtime artifacts
+outputs/ledger.db
+outputs/ledger.db-journal
+outputs/ledger.db-shm
+outputs/ledger.db-wal
+outputs/llm_trace/
+outputs/web_cache/
+outputs/candidates/
+outputs/briefs/
+outputs/pdfs/
+outputs/regression/
+outputs/*.pdf
+outputs/*.png
+outputs/*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
