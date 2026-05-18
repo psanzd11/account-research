@@ -479,8 +479,8 @@ def _unwrap_tool_input(input_dict: Any, schema_name: str) -> Any:
 
     Three patterns observed in the wild:
 
-    1. ``{"$PARAMETER_NAME": {<actual>}}`` — a leaked template placeholder
-       from the JSON Schema definition.
+    1. ``{"$PARAMETER_NAME": {<actual>}}`` or ``{"$PARAMETER_VALUE": {...}}``
+       — leaked template placeholders from the JSON Schema definition.
     2. ``{"<schema-derived>": {<actual>}}`` — e.g. ``{"brief": {...}}`` for
        ``BriefData``, ``{"report": {...}}`` for ``ReviewerReport``.
     3. ``{"parameter"|"input"|"output"|...: {<actual>}}`` — a generic wrapper
@@ -488,12 +488,14 @@ def _unwrap_tool_input(input_dict: Any, schema_name: str) -> Any:
 
     Returns the unwrapped dict, or the original value if no pattern matched.
     """
-    # Pattern 1: literal $PARAMETER_NAME placeholder
-    if (isinstance(input_dict, dict)
-            and len(input_dict) == 1
-            and "$PARAMETER_NAME" in input_dict
-            and isinstance(input_dict["$PARAMETER_NAME"], dict)):
-        input_dict = input_dict["$PARAMETER_NAME"]
+    # Pattern 1: literal $PARAMETER_NAME / $PARAMETER_VALUE placeholders
+    for placeholder in ("$PARAMETER_NAME", "$PARAMETER_VALUE"):
+        if (isinstance(input_dict, dict)
+                and len(input_dict) == 1
+                and placeholder in input_dict
+                and isinstance(input_dict[placeholder], dict)):
+            input_dict = input_dict[placeholder]
+            break
 
     # Patterns 2 + 3: single-key dict whose key is either schema-derived or
     # in the generic wrap list, and whose value is itself a dict.

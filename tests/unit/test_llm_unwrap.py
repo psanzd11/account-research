@@ -32,6 +32,15 @@ def test_parameter_name_placeholder_unwrap() -> None:
     assert _unwrap_tool_input(wrapped, "BriefData") == inner
 
 
+def test_parameter_value_placeholder_unwrap() -> None:
+    """`{"$PARAMETER_VALUE": {...}}` — variant of the placeholder above
+    observed on the 2026-05-18 Guillermo Jaime Calderón run (Author
+    crashed with 4 ValidationErrors before this allowlist was extended)."""
+    inner = {"entity_id": "bb25f9a3", "hero": {}, "quick_take": {"body": "x"}}
+    wrapped = {"$PARAMETER_VALUE": inner}
+    assert _unwrap_tool_input(wrapped, "BriefData") == inner
+
+
 def test_schema_derived_key_unwrap() -> None:
     """`{"brief": {...}}` for BriefData — schema-name-derived."""
     inner = {"entity_id": "abc"}
