@@ -260,18 +260,25 @@ def cmd_run(args: argparse.Namespace) -> int:
         # Outreach contacts for the page-1 panel (best-effort side-channel,
         # does NOT touch the evidence ledger).
         #
-        # Two sources, tried in order:
+        # A7 (scoped): contacts and Researcher are independent — both only
+        # need the resolved entity. Launch contacts in a background thread,
+        # then run Researcher synchronously, then join. Saves the contacts
+        # latency (30-90s on Sonnet web fallback) for company runs.
+        #
+        # Two contact sources, tried in order inside the thread:
         #   1. Apollo CRM via API key — gives name/title/email/phone when
         #      configured. Free tier returns name+title but emails come back
         #      as placeholders (filtered out in the connector).
         #   2. Web-search fallback — runs only when Apollo returns < 2 useful
-        #      contacts. Costs ~$0.05-0.20 (1 Sonnet call + web tools).
-        #      Returns name+title+linkedin_url (no email/phone — PII isn't
-        #      verbatim on public pages).
+        #      contacts. Costs ~\$0.05-0.20 (1 Sonnet call + web tools).
         # ------------------------------------------------------------------
+        import threading
         from account_research.schemas.brief import ContactItem
         contacts: list[ContactItem] = []
-        if persisted_entity.type == EntityType.COMPANY:
+        contacts_thread: threading.Thread | None = None
+
+        def _fetch_contacts() -> None:
+            nonlocal contacts
             try:
                 from account_research.tools.connectors.apollo import ApolloConnector
                 contacts = ApolloConnector(logger=log).search_contacts(
@@ -285,7 +292,6 @@ def cmd_run(args: argparse.Namespace) -> int:
                 log.warning("Apollo contacts lookup failed: %s — continuing", exc)
                 contacts = []
 
-            # Web-search fallback when Apollo whiffed or returned too few.
             if len(contacts) < 2:
                 try:
                     from account_research.tools.contact_finder import (
@@ -308,8 +314,15 @@ def cmd_run(args: argparse.Namespace) -> int:
                         "contact_finder fallback failed: %s — continuing", exc,
                     )
 
+        if persisted_entity.type == EntityType.COMPANY:
+            contacts_thread = threading.Thread(
+                target=_fetch_contacts, daemon=True, name="contacts",
+            )
+            contacts_thread.start()
+
         # ------------------------------------------------------------------
-        # Phase 2 — Researcher
+        # Phase 2 — Researcher (runs concurrently with the contacts thread
+        # above for company runs)
         # ------------------------------------------------------------------
         progress("researcher", "start")
         try:
@@ -320,6 +333,17 @@ def cmd_run(args: argparse.Namespace) -> int:
         inserted = insert_evidence_bulk(session, batch.items)
         session.commit()
         progress("researcher", "done")
+
+        # Join the contacts thread now so the brief receives whatever was
+        # found by the time Author runs. A bounded join keeps us from
+        # hanging the pipeline if the Sonnet web fallback wedges.
+        if contacts_thread is not None:
+            contacts_thread.join(timeout=120)
+            if contacts_thread.is_alive():
+                log.warning(
+                    "contacts thread still running after 120s — proceeding "
+                    "without it; the brief will render without page-1 contacts.",
+                )
 
         # ------------------------------------------------------------------
         # Phase 3 — Fact-Checker

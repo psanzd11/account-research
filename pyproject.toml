@@ -21,3 +21,4 @@ addopts = "-ra --strict-markers"
 markers = [
     "integration: tests that hit external services or run the full pipeline",
 ]
+asyncio_mode = "auto"

@@ -6,8 +6,9 @@ Three flavors:
    dicts you hand to LLMClient as `extra_tools`. Anthropic executes the tool
    server-side; the agent never sees the raw HTTP traffic.
 
-2. `direct_web_fetch(url)` — a local httpx GET with on-disk caching. Free.
-   Good for static HTML. Fails on JS-rendered SPAs (returns empty skeleton).
+2. `direct_web_fetch(url)` (and `direct_web_fetch_async`) — a local httpx
+   GET with on-disk caching. Free. Good for static HTML. Fails on JS-
+   rendered SPAs (returns empty skeleton).
 
 3. `anthropic_web_fetch(url, llm_client, model=HAIKU)` — single Haiku call
    that uses Anthropic's server-side web_fetch (JS-aware). Used as a fallback
@@ -16,9 +17,16 @@ Three flavors:
 
 Cache directory defaults to outputs/web_cache/; tests can override via the
 `cache_dir` argument or by setting WEB_CACHE_DIR.
+
+A7 — Cache writes are atomic (tmp + os.replace). This makes the cache
+safe under concurrent writes from multiple Fact-Checker workers, multiple
+CLI processes, and the Streamlit refine flow firing alongside a manual
+run. Partial-read corruption was theoretically possible before; in
+practice we got lucky.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -76,6 +84,68 @@ def _cache_key(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()[:32]
 
 
+_FETCH_HEADERS = {
+    "User-Agent": "account-research-agents/0.1 (+https://github.com/)",
+    "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+}
+
+
+def _read_cache(cache_path: Path) -> FetchResult | None:
+    """Return the cached FetchResult or None if missing/corrupt. A partial
+    write that left invalid JSON behind is treated as missing; the caller
+    re-fetches and rewrites atomically.
+    """
+    if not cache_path.exists():
+        return None
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return FetchResult(
+        url=data["url"],
+        status=data["status"],
+        content_text=data["content_text"],
+        fetched_at=datetime.fromisoformat(data["fetched_at"]),
+        from_cache=True,
+    )
+
+
+def _write_cache_atomic(cache_path: Path, result: FetchResult) -> None:
+    """Atomic write: serialize to a temp sibling, then os.replace into place.
+
+    Concurrent writers all write their own tmp file; os.replace is atomic on
+    POSIX, and on Windows when source/dest are on the same volume AND no
+    other process holds the destination open. Since the cache key is
+    content-addressed (sha256 of the URL), two writers racing the same URL
+    converge to byte-identical payloads — if Windows rejects our replace
+    because a concurrent writer just installed theirs, we silently drop the
+    temp (they wrote the same bytes).
+    """
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cache_path.with_suffix(
+        f".{os.getpid()}.{hashlib.sha256(str(id(result)).encode()).hexdigest()[:8]}.tmp"
+    )
+    tmp.write_text(
+        json.dumps({
+            "url": result.url,
+            "status": result.status,
+            "content_text": result.content_text,
+            "fetched_at": result.fetched_at.isoformat(),
+        }),
+        encoding="utf-8",
+    )
+    try:
+        os.replace(tmp, cache_path)
+    except PermissionError:
+        # Windows: another writer holds the destination open right now.
+        # Their payload is byte-identical (content-addressed key), so drop
+        # our temp and move on — the cache stays consistent either way.
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
 def direct_web_fetch(
     url: str,
     *,
@@ -86,21 +156,14 @@ def direct_web_fetch(
     cache_root = cache_dir or _cache_dir()
     cache_path = cache_root / f"{_cache_key(url)}.json"
 
-    if use_cache and cache_path.exists():
-        data = json.loads(cache_path.read_text(encoding="utf-8"))
-        return FetchResult(
-            url=data["url"],
-            status=data["status"],
-            content_text=data["content_text"],
-            fetched_at=datetime.fromisoformat(data["fetched_at"]),
-            from_cache=True,
-        )
+    if use_cache:
+        cached = _read_cache(cache_path)
+        if cached is not None:
+            return cached
 
-    headers = {
-        "User-Agent": "account-research-agents/0.1 (+https://github.com/)",
-        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
-    }
-    with httpx.Client(follow_redirects=True, timeout=timeout_s, headers=headers) as client:
+    with httpx.Client(
+        follow_redirects=True, timeout=timeout_s, headers=_FETCH_HEADERS,
+    ) as client:
         resp = client.get(url)
 
     result = FetchResult(
@@ -112,17 +175,57 @@ def direct_web_fetch(
     )
 
     if use_cache:
-        cache_path.write_text(
-            json.dumps(
-                {
-                    "url": result.url,
-                    "status": result.status,
-                    "content_text": result.content_text,
-                    "fetched_at": result.fetched_at.isoformat(),
-                }
-            ),
-            encoding="utf-8",
-        )
+        _write_cache_atomic(cache_path, result)
+
+    return result
+
+
+async def direct_web_fetch_async(
+    url: str,
+    *,
+    timeout_s: float = 15.0,
+    use_cache: bool = True,
+    cache_dir: Path | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> FetchResult:
+    """Async sibling of ``direct_web_fetch``.
+
+    Designed for ``asyncio.gather`` over many URLs (Fact-Checker batch
+    re-fetch, contact-finder, etc.). Honors the same atomic-write cache
+    contract so callers can share a process-wide ``WEB_CACHE_DIR`` with
+    sync callers without corruption.
+
+    Pass a shared ``httpx.AsyncClient`` when fetching many URLs to reuse
+    connections; otherwise a one-shot client is opened per call.
+    """
+    cache_root = cache_dir or _cache_dir()
+    cache_path = cache_root / f"{_cache_key(url)}.json"
+
+    if use_cache:
+        cached = _read_cache(cache_path)
+        if cached is not None:
+            return cached
+
+    if client is None:
+        async with httpx.AsyncClient(
+            follow_redirects=True, timeout=timeout_s, headers=_FETCH_HEADERS,
+        ) as own_client:
+            resp = await own_client.get(url)
+    else:
+        resp = await client.get(url)
+
+    result = FetchResult(
+        url=str(resp.url),
+        status=resp.status_code,
+        content_text=resp.text,
+        fetched_at=datetime.now(timezone.utc),
+        from_cache=False,
+    )
+
+    if use_cache:
+        # Atomic write is thread/process-safe; no per-URL lock needed
+        # because content-addressed keys make racing writers converge.
+        _write_cache_atomic(cache_path, result)
 
     return result
 
