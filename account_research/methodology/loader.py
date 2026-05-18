@@ -19,8 +19,10 @@ maintainer-facing spec. See [[recipes-as-python-modules]] in MEMORY.md.
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
@@ -37,6 +39,8 @@ from account_research.schemas.evidence import (
     ConfidenceLevel,
     VerifiedEvidenceItem,
 )
+
+logger = logging.getLogger("methodology")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_YAML_DIR = REPO_ROOT / "methodology"
@@ -85,6 +89,12 @@ class Recipe(BaseModel):
     description: str | None = None
     required_signals: list[RequiredSignal] = Field(default_factory=list)
     minimum_required_signals: int = 1
+    # A6 — Freshness window. Signals derived from evidence older than this
+    # many days are still used in compute() but do NOT count toward the
+    # post-compute freshness gate. When the count of fresh signals drops
+    # below `minimum_required_signals`, the dispatcher degrades the result
+    # confidence to LOW and appends a stale-evidence caveat. 0 disables.
+    minimum_evidence_freshness_days: int = Field(default=0, ge=0)
     caveat_template: str = ""
     notes: str | None = None
 
@@ -203,6 +213,34 @@ def dispatch(
     if isinstance(result, InsufficientSignals):
         return result
 
+    # A6 — Freshness gate. Recipes set ``minimum_evidence_freshness_days``;
+    # when too few signals trace to recent-enough evidence, downgrade the
+    # confidence to LOW and append a caveat so the Author / Reviewer can
+    # see that the estimate is leaning on stale data. We do NOT prune the
+    # signals or refuse to produce an Estimate — the brief still ships,
+    # just with an honest confidence label.
+    if recipe.minimum_evidence_freshness_days:
+        fresh, total = _count_fresh_signals(
+            result.signals_used, ledger,
+            recipe.minimum_evidence_freshness_days,
+        )
+        if total > 0 and fresh < recipe.minimum_required_signals:
+            stale_caveat = (
+                f"Some signals exceed the freshness window of "
+                f"{recipe.minimum_evidence_freshness_days} days "
+                f"({fresh}/{total} fresh)."
+            )
+            logger.info(
+                "A6 freshness gate: %s — %d/%d signals fresh, "
+                "degrading confidence to low",
+                method_id, fresh, total,
+            )
+            result.confidence = ConfidenceLevel.LOW
+            if stale_caveat not in result.caveat_text:
+                result.caveat_text = (
+                    result.caveat_text.rstrip() + " " + stale_caveat
+                ).strip()
+
     return Estimate(
         entity_id=entity_id,
         metric=recipe.metric,
@@ -215,6 +253,28 @@ def dispatch(
         assumptions=result.assumptions,
         caveat_text=result.caveat_text,
     )
+
+
+def _count_fresh_signals(
+    signals_used: list[SignalUsed],
+    ledger: list[VerifiedEvidenceItem],
+    freshness_days: int,
+) -> tuple[int, int]:
+    """Return (fresh_count, total_count) of signals whose underlying
+    evidence_id is younger than ``freshness_days``. Signals whose
+    evidence_id is not in the ledger are counted as stale (defensive)."""
+    if freshness_days <= 0 or not signals_used:
+        return len(signals_used), len(signals_used)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=freshness_days)
+    by_id = {ev.id: ev for ev in ledger}
+    fresh = 0
+    for sig in signals_used:
+        ev = by_id.get(sig.evidence_id)
+        if ev is None:
+            continue
+        if ev.fetched_at >= cutoff:
+            fresh += 1
+    return fresh, len(signals_used)
 
 
 # ---------------------------------------------------------------------------

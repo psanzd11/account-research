@@ -4,6 +4,12 @@ metric: estimated_net_worth
 unit: USD
 output_type: range  # always a range, never point
 
+# A6 — Evidence freshness window. Signals derived from evidence older than
+# this many days do NOT count toward `signals_present` for the freshness
+# gate. When fewer than `minimum_required_signals` fresh signals remain,
+# confidence is degraded to "low" and a stale-evidence caveat is appended.
+minimum_evidence_freshness_days: 365
+
 description: >
   Estimates an individual's net worth from indirect public signals.
   Used only when no public disclosure exists.

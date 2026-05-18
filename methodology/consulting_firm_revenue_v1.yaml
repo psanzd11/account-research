@@ -4,6 +4,9 @@ metric: estimated_annual_revenue
 unit: USD/year
 output_type: range
 
+# A6 — Evidence freshness window (see net_worth_individual_v1 for semantics).
+minimum_evidence_freshness_days: 365
+
 description: >
   Estimates annual revenue for a private consulting firm
   (PM, strategy, implementation services) when no public disclosure exists.

@@ -4,6 +4,9 @@ metric: estimated_annual_revenue
 unit: USD/year
 output_type: range
 
+# A6 — Evidence freshness window (see net_worth_individual_v1 for semantics).
+minimum_evidence_freshness_days: 365
+
 description: >
   Estimates ARR for a private SaaS company from headcount, customer count,
   pricing tiers, and funding signals. Used only when no public disclosure

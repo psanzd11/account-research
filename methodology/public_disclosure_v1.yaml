@@ -4,6 +4,12 @@ metric: estimated_annual_revenue
 unit: USD/year
 output_type: range
 
+# A6 — Evidence freshness window. Public-disclosure figures (SEC filings,
+# press releases with explicit revenue) age slower than indirect signals,
+# so this recipe tolerates a longer window before the freshness gate
+# degrades confidence.
+minimum_evidence_freshness_days: 730
+
 description: >
   Skips heuristics for companies whose annual revenue (or sales / ARR) has
   been publicly disclosed in an SEC filing, earnings call, press release, or
