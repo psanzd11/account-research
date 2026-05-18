@@ -1,4 +1,4 @@
-"""Semantic citation validator (Phase 5 / D2, extended in Round 2 / G8).
+"""Semantic citation validator (Phase 5 / D2, extended in Round 2 / G8, A4).
 
 The Author validates that every cited evidence_id exists in the ledger (UUID
 check). That's necessary but not sufficient: the Author can cite UUID-X while
@@ -7,13 +7,16 @@ bearing field against the joined `raw_quote` of its cited evidence and flags
 weak overlaps so the Reviewer can arbitrate in the next iteration.
 
 Two methods, gated by env vars:
-  - Default: stop-word-stripped Jaccard token overlap + 4-gram shared-shingle
-    check. Cheap, deterministic, but misses cross-language paraphrase.
-  - When `USE_EMBEDDINGS_FOR_CITATIONS=1` and `VOYAGE_API_KEY` is set, uses
-    Voyage AI cosine similarity. Catches ES↔EN paraphrase reliably. ~$0.001
-    per brief in cost.
+  - Default (A4): Voyage AI cosine similarity. Catches ES↔EN paraphrase
+    reliably. ~$0.001 per brief, well under the Author cost it protects.
+    Quote embeddings are cached in-process by raw_quote hash, so revision
+    iterations only embed the (changed) prose.
+  - Fallback: stop-word-stripped Jaccard token overlap + 4-gram shared-
+    shingle check. Cheap, deterministic, but misses cross-language
+    paraphrase. Triggered when VOYAGE_API_KEY is unset, when
+    DISABLE_EMBEDDINGS_FOR_CITATIONS=1, or when Voyage raises.
 
-In both cases the validator only FLAGS — it never strips the citation. The
+In every case the validator only FLAGS — it never strips the citation. The
 Reviewer is the authoritative arbiter.
 
 Use:
@@ -22,6 +25,8 @@ Use:
 """
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 from typing import Iterable
 from uuid import UUID
@@ -30,15 +35,38 @@ from account_research.schemas.brief import BriefData
 from account_research.schemas.evidence import VerifiedEvidenceItem
 from account_research.utils.text_normalize import normalize_for_match
 
-# G8: opt-in cross-language embeddings. Default OFF (Jaccard fallback).
-_USE_EMBEDDINGS = (
-    os.environ.get("USE_EMBEDDINGS_FOR_CITATIONS", "0").lower()
-    in ("1", "true", "yes", "on")
-)
+logger = logging.getLogger("citation_validator")
+
+# A4 (was G8): cross-language embeddings are now DEFAULT ON. Set
+# DISABLE_EMBEDDINGS_FOR_CITATIONS=1 to force the Jaccard fallback (e.g.
+# for offline runs or when you want strictly-deterministic results).
+# Legacy USE_EMBEDDINGS_FOR_CITATIONS=0 is also honored for back-compat.
+def _read_use_embeddings() -> bool:
+    if os.environ.get("DISABLE_EMBEDDINGS_FOR_CITATIONS", "0").lower() in (
+        "1", "true", "yes", "on"
+    ):
+        return False
+    legacy = os.environ.get("USE_EMBEDDINGS_FOR_CITATIONS")
+    if legacy is not None and legacy.lower() in ("0", "false", "no", "off"):
+        return False
+    return True
+
+
+_USE_EMBEDDINGS = _read_use_embeddings()
 _VOYAGE_MODEL = os.environ.get("VOYAGE_EMBEDDING_MODEL", "voyage-3")
 _VOYAGE_COSINE_THRESHOLD = float(
     os.environ.get("VOYAGE_COSINE_THRESHOLD", "0.50")
 )
+
+# Module-level cache: SHA256(raw_quote) → embedding vector. Quote text is
+# stable across revision iterations for the same ledger, so caching here
+# eliminates redundant Voyage calls on iter 2+. Prose embeddings change
+# every iter (Author re-emits) and are NOT cached. The cache is intentionally
+# global / process-lifetime — embeddings of the same text are deterministic.
+_QUOTE_EMBEDDING_CACHE: dict[str, list[float]] = {}
+
+# One-shot warning gate when VOYAGE_API_KEY is missing but embeddings are on.
+_warned_missing_voyage_key = False
 
 # Stop words intentionally inline — keeping the module dependency-free.
 _STOPWORDS = frozenset({
@@ -210,19 +238,28 @@ def compute_weak_citations(
     """
     quotes_by_id: dict[UUID, str] = {ev.id: ev.raw_quote for ev in ledger}
 
-    if _USE_EMBEDDINGS and os.environ.get("VOYAGE_API_KEY", "").strip():
-        try:
-            return _compute_weak_citations_embeddings(
-                brief, quotes_by_id,
-                cosine_threshold=_VOYAGE_COSINE_THRESHOLD,
-            )
-        except Exception as exc:  # noqa: BLE001
-            # Fail open to Jaccard
-            import logging
-            logging.getLogger("citation_validator").warning(
-                "Voyage embeddings unavailable (%s); falling back to Jaccard",
-                exc,
-            )
+    if _USE_EMBEDDINGS:
+        if os.environ.get("VOYAGE_API_KEY", "").strip():
+            try:
+                return _compute_weak_citations_embeddings(
+                    brief, quotes_by_id,
+                    cosine_threshold=_VOYAGE_COSINE_THRESHOLD,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Fail open to Jaccard — caching layer untouched.
+                logger.warning(
+                    "Voyage embeddings unavailable (%s); falling back to "
+                    "Jaccard for this brief", exc,
+                )
+        else:
+            global _warned_missing_voyage_key
+            if not _warned_missing_voyage_key:
+                logger.warning(
+                    "VOYAGE_API_KEY not set; falling back to Jaccard for "
+                    "citation validation. Set VOYAGE_API_KEY or "
+                    "DISABLE_EMBEDDINGS_FOR_CITATIONS=1 to silence."
+                )
+                _warned_missing_voyage_key = True
 
     flags: list[dict] = []
     for location, prose, evidence_ids in _field_pairs(brief):
@@ -238,13 +275,24 @@ def compute_weak_citations(
     return flags
 
 
+def _quote_hash(text: str) -> str:
+    """Stable cache key for a quote string. SHA256 hex (deterministic,
+    collision-resistant for the few-thousand quotes we'll ever see)."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def _compute_weak_citations_embeddings(
     brief: BriefData,
     quotes_by_id: dict[UUID, str],
     *,
     cosine_threshold: float,
 ) -> list[dict]:
-    """Voyage AI embedding path. Imported lazily so the dep stays optional."""
+    """Voyage AI embedding path. Imported lazily so the dep stays optional.
+
+    Quote embeddings are cached by ``sha256(raw_quote)``; only the prose +
+    any newly-seen quotes go into the embed batch. On revision iterations
+    every quote is already cached, so we embed only the (changed) prose.
+    """
     import voyageai  # type: ignore[import-not-found]
     client = voyageai.Client(api_key=os.environ["VOYAGE_API_KEY"])
 
@@ -257,24 +305,44 @@ def _compute_weak_citations_embeddings(
     if not pairs:
         return []
 
-    # Build the embedding inputs: prose + joined quotes per pair
     prose_inputs = [p[1] for p in pairs]
     quote_inputs = [
         " ".join(quotes_by_id[eid] for eid in p[2] if eid in quotes_by_id)
         for p in pairs
     ]
-    all_inputs = prose_inputs + quote_inputs
-    result = client.embed(all_inputs, model=_VOYAGE_MODEL, input_type="document")
+
+    # Identify quote inputs that are NOT yet in the cache.
+    uncached_quote_inputs: list[str] = []
+    uncached_quote_hashes: list[str] = []
+    quote_hashes = [_quote_hash(q) for q in quote_inputs]
+    for q, h in zip(quote_inputs, quote_hashes):
+        if h not in _QUOTE_EMBEDDING_CACHE and q and h not in uncached_quote_hashes:
+            uncached_quote_inputs.append(q)
+            uncached_quote_hashes.append(h)
+
+    batch_inputs = prose_inputs + uncached_quote_inputs
+    if not batch_inputs:
+        return []
+
+    result = client.embed(
+        batch_inputs, model=_VOYAGE_MODEL, input_type="document",
+    )
     embeddings = result.embeddings
     n = len(pairs)
     prose_vecs = embeddings[:n]
-    quote_vecs = embeddings[n:]
+    new_quote_vecs = embeddings[n:]
+
+    # Populate cache from the newly-embedded quotes.
+    for h, vec in zip(uncached_quote_hashes, new_quote_vecs):
+        _QUOTE_EMBEDDING_CACHE[h] = vec
 
     flags: list[dict] = []
     for i, (loc, prose, evidence_ids) in enumerate(pairs):
-        if not quote_inputs[i]:
+        q = quote_inputs[i]
+        if not q:
             continue
-        cos = _cosine(prose_vecs[i], quote_vecs[i])
+        quote_vec = _QUOTE_EMBEDDING_CACHE[quote_hashes[i]]
+        cos = _cosine(prose_vecs[i], quote_vec)
         if cos < cosine_threshold:
             flags.append({
                 "location": loc,
