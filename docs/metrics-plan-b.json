@@ -1,0 +1,481 @@
+{
+  "captured_at": "2026-05-18T17:04:42+00:00",
+  "phase": "plan-b",
+  "regression_entities": [
+    {
+      "run_id": "92389fe4-d5a6-4bb2-a92f-b8953b8edf8a",
+      "query": "BW Project Management",
+      "entity_id": "6c1236a3-9876-469f-8664-9fb0b018c271",
+      "entity_name": "BW Project Management",
+      "entity_type": "company",
+      "status": "completed",
+      "started_at": "2026-05-18T15:59:46.712815+00:00",
+      "completed_at": "2026-05-18T16:08:28.343900+00:00",
+      "iterations": 3,
+      "evidence_total": 39,
+      "evidence_verified": 9,
+      "evidence_dead": 14,
+      "evidence_rejected": 16,
+      "evidence_unverifiable": 0,
+      "verification_rate_pct": 23.1,
+      "calls_total": 17,
+      "input_tokens": 535451,
+      "output_tokens": 45974,
+      "cache_read_tokens": 48422,
+      "cache_creation_tokens": 14470,
+      "cost_usd": 5.1261,
+      "saved_usd": 0.6537,
+      "wall_seconds": 521.631085,
+      "per_agent": {
+        "disambiguator": {
+          "calls": 2,
+          "usd": 0.1905,
+          "in": 51853,
+          "out": 2328,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "contact_finder": {
+          "calls": 1,
+          "usd": 0.3301,
+          "in": 105350,
+          "out": 939,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "researcher": {
+          "calls": 1,
+          "usd": 0.6685,
+          "in": 176204,
+          "out": 9329,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "researcher:supplemental": {
+          "calls": 1,
+          "usd": 0.4402,
+          "in": 134508,
+          "out": 2443,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "anthropic_web_fetch": {
+          "calls": 4,
+          "usd": 0.0129,
+          "in": 9414,
+          "out": 693,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "author": {
+          "calls": 5,
+          "usd": 2.7514,
+          "in": 31841,
+          "out": 27102,
+          "cache_r": 38964,
+          "cache_w": 9741
+        },
+        "reviewer": {
+          "calls": 3,
+          "usd": 0.7326,
+          "in": 26281,
+          "out": 3140,
+          "cache_r": 9458,
+          "cache_w": 4729
+        }
+      }
+    },
+    {
+      "run_id": "9c59cbf5-19d2-4e6b-bbef-3015bd31a090",
+      "query": "Alexandra Plasencia",
+      "entity_id": null,
+      "entity_name": null,
+      "entity_type": null,
+      "status": "halted_ambiguous",
+      "started_at": "2026-05-18T15:59:57.491665+00:00",
+      "completed_at": "2026-05-18T16:00:40.993060+00:00",
+      "iterations": 0,
+      "evidence_total": 0,
+      "evidence_verified": 0,
+      "evidence_dead": 0,
+      "evidence_rejected": 0,
+      "evidence_unverifiable": 0,
+      "verification_rate_pct": 0.0,
+      "calls_total": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "cost_usd": 0,
+      "saved_usd": 0,
+      "wall_seconds": 43.501395,
+      "per_agent": {}
+    },
+    {
+      "run_id": "bda2c0fe-08e3-4e23-a746-ff69e13f3864",
+      "query": "Alexandra Plasencia",
+      "entity_id": "e5e03da2-58bb-4fc3-9d3d-8f7700243904",
+      "entity_name": "Alejandra Plasencia",
+      "entity_type": "person",
+      "status": "completed_author_fallback",
+      "started_at": "2026-05-18T16:09:00.250726+00:00",
+      "completed_at": "2026-05-18T16:11:26.139826+00:00",
+      "iterations": 1,
+      "evidence_total": 27,
+      "evidence_verified": 17,
+      "evidence_dead": 8,
+      "evidence_rejected": 2,
+      "evidence_unverifiable": 0,
+      "verification_rate_pct": 63.0,
+      "calls_total": 4,
+      "input_tokens": 391024,
+      "output_tokens": 10553,
+      "cache_read_tokens": 7171,
+      "cache_creation_tokens": 1634,
+      "cost_usd": 1.3513,
+      "saved_usd": 0.0968,
+      "wall_seconds": 145.8891,
+      "per_agent": {
+        "researcher": {
+          "calls": 1,
+          "usd": 0.4929,
+          "in": 133010,
+          "out": 6260,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "researcher:supplemental": {
+          "calls": 1,
+          "usd": 0.7994,
+          "in": 253588,
+          "out": 2578,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "anthropic_web_fetch": {
+          "calls": 1,
+          "usd": 0.0127,
+          "in": 4349,
+          "out": 1666,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "author": {
+          "calls": 1,
+          "usd": 0.0462,
+          "in": 77,
+          "out": 49,
+          "cache_r": 7171,
+          "cache_w": 1634
+        }
+      }
+    },
+    {
+      "run_id": "a27f58d4-c2d5-4edd-a0ab-d440e2f45c29",
+      "query": "Stripe",
+      "entity_id": "99aa7eeb-0b3a-4393-8440-c607df04b4be",
+      "entity_name": "Stripe, Inc.",
+      "entity_type": "company",
+      "status": "completed",
+      "started_at": "2026-05-18T16:11:33.922501+00:00",
+      "completed_at": "2026-05-18T16:23:50.048753+00:00",
+      "iterations": 3,
+      "evidence_total": 70,
+      "evidence_verified": 67,
+      "evidence_dead": 1,
+      "evidence_rejected": 2,
+      "evidence_unverifiable": 0,
+      "verification_rate_pct": 95.7,
+      "calls_total": 10,
+      "input_tokens": 435030,
+      "output_tokens": 52055,
+      "cache_read_tokens": 91079,
+      "cache_creation_tokens": 34783,
+      "cost_usd": 5.6791,
+      "saved_usd": 1.2296,
+      "wall_seconds": 736.126252,
+      "per_agent": {
+        "disambiguator": {
+          "calls": 1,
+          "usd": 0.0941,
+          "in": 26347,
+          "out": 1003,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "contact_finder": {
+          "calls": 1,
+          "usd": 0.2113,
+          "in": 67071,
+          "out": 672,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "researcher": {
+          "calls": 1,
+          "usd": 0.9986,
+          "in": 254945,
+          "out": 15585,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "anthropic_web_fetch": {
+          "calls": 1,
+          "usd": 0.0231,
+          "in": 14491,
+          "out": 1721,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "author": {
+          "calls": 3,
+          "usd": 3.0132,
+          "in": 27624,
+          "out": 29314,
+          "cache_r": 55355,
+          "cache_w": 16921
+        },
+        "reviewer": {
+          "calls": 3,
+          "usd": 1.3388,
+          "in": 44552,
+          "out": 3760,
+          "cache_r": 35724,
+          "cache_w": 17862
+        }
+      }
+    },
+    {
+      "run_id": "2b47c09d-d9d0-4324-b671-356caea215cb",
+      "query": "Mercado Libre",
+      "entity_id": "f942124f-549a-46f8-a1fc-60bb33df874c",
+      "entity_name": "MercadoLibre, Inc.",
+      "entity_type": "company",
+      "status": "completed",
+      "started_at": "2026-05-18T16:24:08.981564+00:00",
+      "completed_at": "2026-05-18T16:34:30.264478+00:00",
+      "iterations": 3,
+      "evidence_total": 51,
+      "evidence_verified": 39,
+      "evidence_dead": 7,
+      "evidence_rejected": 5,
+      "evidence_unverifiable": 0,
+      "verification_rate_pct": 76.5,
+      "calls_total": 10,
+      "input_tokens": 346038,
+      "output_tokens": 48601,
+      "cache_read_tokens": 66640,
+      "cache_creation_tokens": 33320,
+      "cost_usd": 5.249,
+      "saved_usd": 0.8996,
+      "wall_seconds": 621.282914,
+      "per_agent": {
+        "disambiguator": {
+          "calls": 1,
+          "usd": 0.1445,
+          "in": 42734,
+          "out": 1084,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "contact_finder": {
+          "calls": 1,
+          "usd": 0.1658,
+          "in": 50706,
+          "out": 909,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "researcher": {
+          "calls": 1,
+          "usd": 0.7309,
+          "in": 176905,
+          "out": 13346,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "anthropic_web_fetch": {
+          "calls": 1,
+          "usd": 0.0105,
+          "in": 5868,
+          "out": 924,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "author": {
+          "calls": 3,
+          "usd": 2.9868,
+          "in": 25240,
+          "out": 29383,
+          "cache_r": 37196,
+          "cache_w": 18598
+        },
+        "reviewer": {
+          "calls": 3,
+          "usd": 1.2106,
+          "in": 44585,
+          "out": 2955,
+          "cache_r": 29444,
+          "cache_w": 14722
+        }
+      }
+    },
+    {
+      "run_id": "33fd57b1-2ee1-4c00-8c17-86e800ff5683",
+      "query": "Guillermo Jaime Calderon",
+      "entity_id": "c02d8b6d-365f-4bb4-b90d-8543dbfa93c5",
+      "entity_name": "Guillermo Jaime Calder\u00f3n",
+      "entity_type": "person",
+      "status": "completed",
+      "started_at": "2026-05-18T16:34:38.655936+00:00",
+      "completed_at": "2026-05-18T16:51:56.837812+00:00",
+      "iterations": 3,
+      "evidence_total": 53,
+      "evidence_verified": 36,
+      "evidence_dead": 10,
+      "evidence_rejected": 7,
+      "evidence_unverifiable": 0,
+      "verification_rate_pct": 67.9,
+      "calls_total": 14,
+      "input_tokens": 486709,
+      "output_tokens": 76076,
+      "cache_read_tokens": 124172,
+      "cache_creation_tokens": 32389,
+      "cost_usd": 8.0042,
+      "saved_usd": 1.6763,
+      "wall_seconds": 1038.181876,
+      "per_agent": {
+        "disambiguator": {
+          "calls": 1,
+          "usd": 0.0701,
+          "in": 17272,
+          "out": 1219,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "researcher": {
+          "calls": 1,
+          "usd": 0.5728,
+          "in": 130345,
+          "out": 12121,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "researcher:supplemental": {
+          "calls": 1,
+          "usd": 0.7643,
+          "in": 230227,
+          "out": 4907,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "anthropic_web_fetch": {
+          "calls": 2,
+          "usd": 0.0119,
+          "in": 6409,
+          "out": 1100,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "author": {
+          "calls": 6,
+          "usd": 5.3946,
+          "in": 61500,
+          "out": 52699,
+          "cache_r": 98990,
+          "cache_w": 19798
+        },
+        "reviewer": {
+          "calls": 3,
+          "usd": 1.1904,
+          "in": 40956,
+          "out": 4030,
+          "cache_r": 25182,
+          "cache_w": 12591
+        }
+      }
+    },
+    {
+      "run_id": "abcec720-ee20-4e99-8da4-ca2b9fd9e2f3",
+      "query": "Marcos Galperin",
+      "entity_id": "b325c458-6b5a-4845-8d14-bb6b7aaf10a3",
+      "entity_name": "Marcos Galperin",
+      "entity_type": "person",
+      "status": "completed",
+      "started_at": "2026-05-18T16:52:11.580851+00:00",
+      "completed_at": "2026-05-18T17:02:29.999110+00:00",
+      "iterations": 3,
+      "evidence_total": 50,
+      "evidence_verified": 39,
+      "evidence_dead": 9,
+      "evidence_rejected": 2,
+      "evidence_unverifiable": 0,
+      "verification_rate_pct": 78.0,
+      "calls_total": 9,
+      "input_tokens": 253777,
+      "output_tokens": 45626,
+      "cache_read_tokens": 65702,
+      "cache_creation_tokens": 32851,
+      "cost_usd": 4.8503,
+      "saved_usd": 0.887,
+      "wall_seconds": 618.418259,
+      "per_agent": {
+        "disambiguator": {
+          "calls": 1,
+          "usd": 0.0809,
+          "in": 22234,
+          "out": 949,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "researcher": {
+          "calls": 1,
+          "usd": 0.681,
+          "in": 161438,
+          "out": 13113,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "anthropic_web_fetch": {
+          "calls": 1,
+          "usd": 0.0032,
+          "in": 2353,
+          "out": 172,
+          "cache_r": 0,
+          "cache_w": 0
+        },
+        "author": {
+          "calls": 3,
+          "usd": 2.8378,
+          "in": 25603,
+          "out": 27283,
+          "cache_r": 37476,
+          "cache_w": 18738
+        },
+        "reviewer": {
+          "calls": 3,
+          "usd": 1.2474,
+          "in": 42149,
+          "out": 4109,
+          "cache_r": 28226,
+          "cache_w": 14113
+        }
+      }
+    }
+  ],
+  "uncategorized_calls": 0,
+  "grand_totals": {
+    "calls": 64,
+    "input_tokens": 2448029,
+    "output_tokens": 278885,
+    "cache_read_tokens": 403186,
+    "cache_creation_tokens": 149447,
+    "cost_usd": 30.2601,
+    "saved_usd": 5.443
+  },
+  "diff_vs_baseline": {
+    "baseline_entity": "Guillermo Jaime Calder\u00f3n",
+    "baseline_cost_usd": 1.6589,
+    "matched_entity_cost_usd": 8.0042
+  }
+}
