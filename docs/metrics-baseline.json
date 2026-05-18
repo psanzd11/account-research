@@ -1,0 +1,73 @@
+{
+  "captured_at": "2026-05-18T02:36:49+00:00",
+  "git_branch": "improvements/phase-1",
+  "git_commit": "ebd312a",
+  "phase": "pre-phase-1",
+  "entity": {
+    "name": "Guillermo Jaime Calderón",
+    "type": "person",
+    "geo_hint": "Mexico",
+    "run_id": "71a55d31-663a-43fd-b089-c50f97a850e5",
+    "entity_id": "bb25f9a3-5708-40ee-9255-54ba6ea7bea4"
+  },
+  "wall_clock_seconds": 380,
+  "wall_clock_window_utc": ["2026-05-18T02:30:29+00:00", "2026-05-18T02:36:49+00:00"],
+  "llm_elapsed_ms_total": 366543,
+  "cost_usd_total": 1.6589,
+  "tokens": {
+    "prompt": 215322,
+    "completion": 23564,
+    "cache_read": 0,
+    "cache_creation": 0,
+    "notes": "cache_read / cache_creation are 0 because cache_control is not yet implemented (this is what A1 will fix)."
+  },
+  "reviewer": {
+    "iterations_completed": 0,
+    "final_status": "human_review_needed",
+    "issue_count_final": 0,
+    "notes": "Author crashed on iter 1 → fallback to skeleton brief → Designer rendered → Reviewer skipped. Iteration count from CLI summary = 1, but no Author→Reviewer round-trip happened."
+  },
+  "ledger": {
+    "total_items": 44,
+    "verified": 27,
+    "unverifiable": 6,
+    "source_dead": 11,
+    "rejected_at_factcheck": 0,
+    "verification_rate_pct": 61.4,
+    "notes": "Fact-Checker pruned 17 unacceptable items; 27 Author-acceptable items remained."
+  },
+  "estimates": {
+    "count": 1,
+    "items": [
+      {
+        "method_id": "net_worth_individual_v1",
+        "value_range": "$3M-$30M",
+        "confidence": "low"
+      }
+    ]
+  },
+  "per_agent_cost_usd": {
+    "author":              {"calls": 1, "in_tokens": 16756,  "out_tokens": 8097,  "usd": 0.8586, "elapsed_ms": 114690, "outcome": "validation_error (dollar-PARAMETER_VALUE wrap)"},
+    "researcher":          {"calls": 1, "in_tokens": 170212, "out_tokens": 13308, "usd": 0.7103, "elapsed_ms": 209003, "outcome": "ok"},
+    "disambiguator":       {"calls": 1, "in_tokens": 18392,  "out_tokens": 1405,  "usd": 0.0763, "elapsed_ms": 26548,  "outcome": "ok"},
+    "anthropic_web_fetch": {"calls": 3, "in_tokens": 9962,   "out_tokens": 754,   "usd": 0.0137, "elapsed_ms": 16303,  "outcome": "ok"},
+    "fact_checker":        {"calls": 0, "notes": "Fact-Checker uses re-fetch + fuzzy match, no LLM call. Walk-through elapsed observed ~28s."},
+    "estimator":           {"calls": 0, "notes": "Recipes are pure Python — no LLM call unless a recipe escalates."}
+  },
+  "known_failure_modes_observed": [
+    {
+      "agent": "author",
+      "iteration": 1,
+      "kind": "validation_error",
+      "wrap_key": "$PARAMETER_VALUE",
+      "trace_dump": "outputs/llm_trace/failed_input_54c4cfba.json",
+      "notes": "Variant of the documented claude-parameter-name-wrap pattern. LLMClient._unwrap_tool_input does not yet handle $PARAMETER_VALUE. Out of Phase-1 scope; flagged for follow-up."
+    }
+  ],
+  "phase1_acceptance_targets": {
+    "A1_cost_reduction_pct": "≥15%",
+    "A1_cache_read_tokens": "> 0 on Reviewer iter 2+ (and Author iter 2+)",
+    "A2_iter1_vision": "always on (env REVIEWER_VISION_ON_REVISION=1 default — A2 hardens this)",
+    "A3_orphan_evidence_id": "Designer raises OrphanEvidenceError; orchestrator forces revision instead of crashing"
+  }
+}
