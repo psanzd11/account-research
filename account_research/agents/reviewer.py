@@ -252,14 +252,22 @@ class ReviewerAgent(BaseAgent[ReviewInput, ReviewerReport]):
             },
             {"type": "text", "text": dynamic_text},
         ]
+        # B7: track whether vision actually attached. The env kill-switch
+        # (effective_use_vision=False) and a poppler-missing exception both
+        # leave this False — the Run page surfaces this so the operator
+        # knows when text-only review is the only catch in play.
+        vision_used = False
         if effective_use_vision:
             # Attach page images so the model can see layout issues text-extraction misses
             try:
+                attached = 0
                 for img_b64, mime in _rasterize_pdf(pdf_path):
                     content.append({
                         "type": "image",
                         "source": {"type": "base64", "media_type": mime, "data": img_b64},
                     })
+                    attached += 1
+                vision_used = attached > 0
             except Exception as exc:  # noqa: BLE001 — poppler may not be installed
                 ctx.logger.warning(
                     "Reviewer: vision fallback unavailable (%s); proceeding text-only",
@@ -287,6 +295,8 @@ class ReviewerAgent(BaseAgent[ReviewInput, ReviewerReport]):
             report = report.model_copy(update={"pdf_path": payload.pdf_path})
         if report.iteration != payload.iteration:
             report = report.model_copy(update={"iteration": payload.iteration})
+        # B7: vision_used is observed by THIS process, not the LLM. Force it.
+        report = report.model_copy(update={"vision_used": vision_used})
 
         # G5: deterministic structural-rigor checks. Inject CRITICAL issues
         # for thin sections / weak Tier-1 coverage / MEDIUM big-badge cases

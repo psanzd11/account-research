@@ -223,6 +223,87 @@ def test_low_text_pages_force_vision(monkeypatch, tmp_path):
     assert raster_calls, "low-text pages should force vision fallback"
 
 
+# ---------------------------------------------------------------------------
+# Plan B / B7 — vision_used field on ReviewerReport
+# ---------------------------------------------------------------------------
+
+
+def test_b7_vision_used_true_when_rasterizer_yields_images(monkeypatch, tmp_path):
+    """B7: when at least one image attaches, ReviewerReport.vision_used=True."""
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.4 stub")
+    monkeypatch.setattr(
+        "account_research.agents.reviewer._extract_pdf_text_with_fallback",
+        lambda _p, ctx: ("rendered text", []),
+    )
+
+    def fake_raster(_pdf_path):
+        yield ("AAAA", "image/png")
+
+    monkeypatch.setattr(
+        "account_research.agents.reviewer._rasterize_pdf", fake_raster,
+    )
+
+    canned = ReviewerReport(status="approved", iteration=1, pdf_path=str(pdf))
+    out = ReviewerAgent().run(
+        ReviewInput(brief=_minimal_brief(), ledger=[], estimates=[],
+                    pdf_path=str(pdf), iteration=1),
+        _ctx(canned),
+    )
+    assert out.vision_used is True
+
+
+def test_b7_vision_used_false_when_poppler_missing(monkeypatch, tmp_path):
+    """B7: a poppler-missing exception during rasterize sets vision_used=False."""
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.4 stub")
+    monkeypatch.setattr(
+        "account_research.agents.reviewer._extract_pdf_text_with_fallback",
+        lambda _p, ctx: ("rendered text", []),
+    )
+
+    def fake_raster(_pdf_path):
+        raise RuntimeError("Unable to get page count. Is poppler installed?")
+
+    monkeypatch.setattr(
+        "account_research.agents.reviewer._rasterize_pdf", fake_raster,
+    )
+
+    canned = ReviewerReport(status="approved", iteration=1, pdf_path=str(pdf))
+    out = ReviewerAgent().run(
+        ReviewInput(brief=_minimal_brief(), ledger=[], estimates=[],
+                    pdf_path=str(pdf), iteration=1),
+        _ctx(canned),
+    )
+    assert out.vision_used is False
+
+
+def test_b7_vision_used_false_when_kill_switch(monkeypatch, tmp_path):
+    """B7: env kill switch leaves vision_used=False; rasterize never runs."""
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.4 stub")
+    monkeypatch.setattr(
+        "account_research.agents.reviewer._extract_pdf_text_with_fallback",
+        lambda _p, ctx: ("rendered text", []),
+    )
+    monkeypatch.setattr("account_research.agents.reviewer._VISION_ENABLED", False)
+
+    raster_calls: list = []
+    monkeypatch.setattr(
+        "account_research.agents.reviewer._rasterize_pdf",
+        lambda p: (raster_calls.append(p) or iter([])),
+    )
+
+    canned = ReviewerReport(status="approved", iteration=1, pdf_path=str(pdf))
+    out = ReviewerAgent().run(
+        ReviewInput(brief=_minimal_brief(), ledger=[], estimates=[],
+                    pdf_path=str(pdf), iteration=1),
+        _ctx(canned),
+    )
+    assert out.vision_used is False
+    assert raster_calls == []
+
+
 def test_vision_disabled_via_env_kill_switch(monkeypatch, tmp_path):
     """A2: setting REVIEWER_VISION_ON_REVISION=0 disables vision globally.
 

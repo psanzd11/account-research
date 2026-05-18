@@ -179,6 +179,10 @@ log_box = st.empty()
 
 states = initial_states()
 latest_iter: tuple[int, int] | None = None
+# B7: track Reviewer vision warnings streamed from the subprocess so we can
+# surface a clear banner if the Reviewer ran text-only.
+vision_warning_seen = False
+reviewer_ran = False
 
 # Initial render so the user sees the 7 pending pills immediately.
 stepper_box.html(agent_stepper_html(strip_internal_keys(states)))
@@ -213,8 +217,16 @@ with st.status(f"Running pipeline on '{query}'...", expanded=True) as status:
                 new_iter = apply_progress(states, m, now)
                 if new_iter is not None:
                     latest_iter = new_iter
+                # B7: any reviewer status (start/done/skipped) marks that
+                # the Reviewer stage was reached at least once.
+                if m.group("agent") == "reviewer":
+                    reviewer_ran = True
             else:
                 log_lines.append(line)
+                # B7: detect poppler-missing / kill-switch vision skip
+                # via the existing Reviewer log line.
+                if "vision fallback unavailable" in line:
+                    vision_warning_seen = True
                 log_box.code("\n".join(log_lines[-80:]), language="text")
 
             # Tick the running clock and re-render on every line so the
@@ -254,6 +266,20 @@ with st.status(f"Running pipeline on '{query}'...", expanded=True) as status:
         status.update(label=f"Failed (exit {exit_code})", state="error")
 
 st.divider()
+
+# B7: surface vision availability when the Reviewer actually ran. Text-only
+# review can miss small-font caveats near the badge — Sprint 3.2's whole
+# motivation. Tell the operator so they know what was (and wasn't) caught.
+if reviewer_ran and vision_warning_seen:
+    st.warning(
+        "**Reviewer ran text-only** — vision rasterization failed (most "
+        "common cause: `poppler` not on PATH). Caveats rendered in small "
+        "font near the hero badge may not have been caught this run. "
+        "Install poppler (`brew install poppler` / `choco install poppler` "
+        "/ apt `poppler-utils`) and re-run to enable the full reviewer "
+        "coverage.",
+        icon=":material/visibility_off:",
+    )
 
 result = _newest_run_after(start_t)
 if result is None:
