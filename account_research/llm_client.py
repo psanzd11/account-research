@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -474,28 +475,40 @@ def _truncate_overlong_strings(
     return out, truncated_paths
 
 
+_DOLLAR_PLACEHOLDER_RE = re.compile(r"^\$[A-Z_]+$")
+
+
 def _unwrap_tool_input(input_dict: Any, schema_name: str) -> Any:
     """Strip the spurious wrappers Claude sometimes adds around tool_use input.
 
     Three patterns observed in the wild:
 
-    1. ``{"$PARAMETER_NAME": {<actual>}}`` or ``{"$PARAMETER_VALUE": {...}}``
-       — leaked template placeholders from the JSON Schema definition.
-    2. ``{"<schema-derived>": {<actual>}}`` — e.g. ``{"brief": {...}}`` for
+    1. ``{"$<ALL_CAPS_UNDERSCORE>": {...}}`` — leaked template placeholders
+       from the JSON Schema definition (``$PARAMETER_NAME``, ``$PARAMETER_VALUE``,
+       and conceivably future variants like ``$PARAMETER_TYPE`` or ``$INPUT``).
+       Matched generically by the ``_DOLLAR_PLACEHOLDER_RE`` regex (B2) so a
+       new variant does not require a code change. A warning is logged with
+       the matched placeholder so the operator can see when a new one fires.
+    2. ``{"<schema-derived>": {...}}`` — e.g. ``{"brief": {...}}`` for
        ``BriefData``, ``{"report": {...}}`` for ``ReviewerReport``.
-    3. ``{"parameter"|"input"|"output"|...: {<actual>}}`` — a generic wrapper
+    3. ``{"parameter"|"input"|"output"|...: {...}}`` — a generic wrapper
        borrowed from the tool_use schema vocabulary.
 
     Returns the unwrapped dict, or the original value if no pattern matched.
     """
-    # Pattern 1: literal $PARAMETER_NAME / $PARAMETER_VALUE placeholders
-    for placeholder in ("$PARAMETER_NAME", "$PARAMETER_VALUE"):
-        if (isinstance(input_dict, dict)
-                and len(input_dict) == 1
-                and placeholder in input_dict
-                and isinstance(input_dict[placeholder], dict)):
-            input_dict = input_dict[placeholder]
-            break
+    # Pattern 1: regex catch-all for $<ALL_CAPS_UNDERSCORE> placeholders.
+    if (isinstance(input_dict, dict)
+            and len(input_dict) == 1):
+        sole_key = next(iter(input_dict.keys()))
+        if (_DOLLAR_PLACEHOLDER_RE.match(sole_key)
+                and isinstance(input_dict[sole_key], dict)):
+            logger.warning(
+                "LLM output: unwrapping leaked schema placeholder %r "
+                "(schema=%s). If this is a new variant, the regex caught "
+                "it; consider adding a regression test case.",
+                sole_key, schema_name,
+            )
+            input_dict = input_dict[sole_key]
 
     # Patterns 2 + 3: single-key dict whose key is either schema-derived or
     # in the generic wrap list, and whose value is itself a dict.

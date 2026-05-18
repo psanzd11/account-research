@@ -41,6 +41,61 @@ def test_parameter_value_placeholder_unwrap() -> None:
     assert _unwrap_tool_input(wrapped, "BriefData") == inner
 
 
+# ---------------------------------------------------------------------------
+# B2 — Regex catch-all for $<ALL_CAPS_UNDERSCORE> placeholder variants
+# ---------------------------------------------------------------------------
+
+
+def test_parameter_type_placeholder_unwrap() -> None:
+    """Future placeholder variant: $PARAMETER_TYPE. The regex catches it
+    without code change so the next time Claude leaks a new template token
+    the pipeline does not crash."""
+    inner = {"entity_id": "abc"}
+    assert _unwrap_tool_input({"$PARAMETER_TYPE": inner}, "BriefData") == inner
+
+
+def test_input_placeholder_unwrap() -> None:
+    """Bare `$INPUT` is still an all-caps single-token placeholder; regex
+    accepts it. Real schemas never use `$INPUT` as a field name."""
+    inner = {"x": 1}
+    assert _unwrap_tool_input({"$INPUT": inner}, "Schema") == inner
+
+
+def test_args_placeholder_unwrap() -> None:
+    inner = {"x": 1}
+    assert _unwrap_tool_input({"$ARGS": inner}, "Schema") == inner
+
+
+def test_lowercase_dollar_field_not_unwrapped() -> None:
+    """`$payment` (lowercase) does NOT match the placeholder regex —
+    leave it alone in case it's a real domain field."""
+    payload = {"$payment": {"amount": 10}}
+    assert _unwrap_tool_input(payload, "Schema") is payload
+
+
+def test_mixed_case_dollar_field_not_unwrapped() -> None:
+    """`$Stripe` mixes cases — not a placeholder pattern, leave alone."""
+    payload = {"$Stripe": {"id": "acct_x"}}
+    assert _unwrap_tool_input(payload, "Schema") is payload
+
+
+def test_dollar_with_digits_not_unwrapped() -> None:
+    """The regex is strict on letters+underscore only. `$AMOUNT_1` falls
+    outside the placeholder pattern — leave alone."""
+    payload = {"$AMOUNT_1": {"v": 1}}
+    assert _unwrap_tool_input(payload, "Schema") is payload
+
+
+def test_dollar_placeholder_logs_warning(caplog) -> None:
+    """When a new placeholder variant matches, the unwrap logs a warning
+    naming the placeholder so the operator can grep for it."""
+    import logging
+    inner = {"entity_id": "abc"}
+    with caplog.at_level(logging.WARNING, logger="account_research.llm_client"):
+        _unwrap_tool_input({"$PARAMETER_FUTURE": inner}, "BriefData")
+    assert any("$PARAMETER_FUTURE" in r.message for r in caplog.records)
+
+
 def test_schema_derived_key_unwrap() -> None:
     """`{"brief": {...}}` for BriefData — schema-name-derived."""
     inner = {"entity_id": "abc"}
