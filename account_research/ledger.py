@@ -110,6 +110,28 @@ class PipelineRunRow(Base):
     issues: Mapped[list[dict]] = mapped_column(JSON, default=list, nullable=False)
 
 
+class QuoteEmbeddingRow(Base):
+    """B6 — Voyage embeddings cached across processes.
+
+    The citation_validator module embeds raw_quote text for cross-language
+    paraphrase matching (A4). Quote text is stable across revision iters
+    for a given ledger, so caching the vector by SHA256(raw_quote) saves
+    Voyage calls. Pre-B6 the cache was process-local; now Streamlit refine
+    flows reuse vectors computed by the CLI run (and vice versa).
+    """
+
+    __tablename__ = "quote_embeddings"
+
+    # Composite primary key: same quote text embedded with a different model
+    # gets its own row. Voyage v3 vectors aren't interchangeable with v3-large.
+    quote_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    model: Mapped[str] = mapped_column(String(64), primary_key=True)
+    vector_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pydantic <-> ORM conversions
 # ---------------------------------------------------------------------------
@@ -314,4 +336,44 @@ def end_run(
     row.iterations = iterations
     row.final_pdf_path = final_pdf_path
     row.issues = issues or []
+    session.flush()
+
+
+# ---------------------------------------------------------------------------
+# B6 — Quote embedding cache (cross-process)
+# ---------------------------------------------------------------------------
+
+
+def get_quote_embedding(
+    session: Session, quote_hash: str, model: str,
+) -> list[float] | None:
+    """Look up a cached embedding vector by content hash + model name.
+
+    Returns None on miss; the caller should fall through to a fresh
+    embedding call (typically Voyage). Pure SQLite hit on hit — no
+    deserialization happens until we're sure we have the row.
+    """
+    row = session.get(QuoteEmbeddingRow, (quote_hash, model))
+    if row is None:
+        return None
+    import json
+    return json.loads(row.vector_json)
+
+
+def put_quote_embedding(
+    session: Session, quote_hash: str, model: str, vector: list[float],
+) -> None:
+    """Upsert an embedding vector. Idempotent on (hash, model)."""
+    import json
+    existing = session.get(QuoteEmbeddingRow, (quote_hash, model))
+    if existing is not None:
+        existing.vector_json = json.dumps(vector)
+        existing.created_at = datetime.now(timezone.utc)
+    else:
+        session.add(QuoteEmbeddingRow(
+            quote_hash=quote_hash,
+            model=model,
+            vector_json=json.dumps(vector),
+            created_at=datetime.now(timezone.utc),
+        ))
     session.flush()

@@ -250,6 +250,9 @@ class TestCrossLanguageHonoredViaCosine:
         and quote vectors (cosine = 1.0) so no flag should be raised."""
         monkeypatch.setattr(cv, "_USE_EMBEDDINGS", True)
         monkeypatch.setenv("VOYAGE_API_KEY", "pa-test")
+        # B6: turn off DB-backed cache so the test doesn't depend on
+        # SQLite session shape. Pure in-memory path.
+        monkeypatch.setattr(cv, "_USE_DB_BACKED_CACHE", False)
         _install_fake_voyage(monkeypatch)
 
         ev = _ev("La firma opera principalmente en México.")
@@ -257,3 +260,78 @@ class TestCrossLanguageHonoredViaCosine:
         flags = cv.compute_weak_citations(brief, [ev])
         # Mocked cosine = 1.0 → no weak flag
         assert flags == []
+
+
+# ---------------------------------------------------------------------------
+# Plan B / B6 — SQLite-backed embedding cache (cross-process)
+# ---------------------------------------------------------------------------
+
+
+class TestEmbeddingCachePersistence:
+    """Hydrate / persist round-trip against a fresh in-memory SQLite."""
+
+    def _patch_sessions(self, monkeypatch, engine):
+        """Point the citation_validator's lazy imports at a test session
+        backed by the given engine. init_db is a no-op (tables already
+        created via the engine fixture)."""
+        from sqlalchemy.orm import sessionmaker
+        TestSession = sessionmaker(bind=engine, autoflush=False,
+                                   autocommit=False, future=True)
+        import account_research.db as db_mod
+        monkeypatch.setattr(db_mod, "SessionLocal", TestSession)
+        monkeypatch.setattr(db_mod, "init_db", lambda: None)
+
+    def test_persist_then_hydrate_round_trip(self, monkeypatch, engine):
+        from account_research.agents.citation_validator import (
+            _hydrate_cache_from_db,
+            _persist_cache_to_db,
+            _QUOTE_EMBEDDING_CACHE,
+        )
+        self._patch_sessions(monkeypatch, engine)
+        _persist_cache_to_db(
+            {"deadbeef": [0.1, 0.2, 0.3]},
+            "voyage-3",
+        )
+        # Simulate a fresh process by clearing the in-memory cache.
+        _QUOTE_EMBEDDING_CACHE.clear()
+        _hydrate_cache_from_db({"deadbeef"}, "voyage-3")
+        assert _QUOTE_EMBEDDING_CACHE.get("deadbeef") == [0.1, 0.2, 0.3]
+
+    def test_hydrate_misses_other_model(self, monkeypatch, engine):
+        """Same quote hash + different model = different cache entry."""
+        from account_research.agents.citation_validator import (
+            _hydrate_cache_from_db,
+            _persist_cache_to_db,
+            _QUOTE_EMBEDDING_CACHE,
+        )
+        self._patch_sessions(monkeypatch, engine)
+        _persist_cache_to_db({"hash1": [1.0, 0.0]}, "voyage-3")
+        _QUOTE_EMBEDDING_CACHE.clear()
+        _hydrate_cache_from_db({"hash1"}, "voyage-3-large")
+        assert "hash1" not in _QUOTE_EMBEDDING_CACHE
+
+    def test_db_backed_path_short_circuits_voyage_call(self, monkeypatch, engine):
+        """End-to-end: a fresh in-memory cache pre-seeded only via SQLite
+        causes the embed call to skip the quote input — Voyage gets only
+        the prose, not the (already-cached) quote text."""
+        from account_research.agents.citation_validator import (
+            _persist_cache_to_db,
+            _quote_hash,
+            _QUOTE_EMBEDDING_CACHE,
+        )
+        self._patch_sessions(monkeypatch, engine)
+        monkeypatch.setattr(cv, "_USE_EMBEDDINGS", True)
+        monkeypatch.setenv("VOYAGE_API_KEY", "pa-test")
+        fake = _install_fake_voyage(monkeypatch)
+
+        ev = _ev("A stable quote we will embed once.")
+        _persist_cache_to_db(
+            {_quote_hash(ev.raw_quote): [1.0, 0.0, 0.0]}, "voyage-3",
+        )
+        _QUOTE_EMBEDDING_CACHE.clear()  # simulate process restart
+
+        b = _brief("Some new prose.", [ev.id])
+        cv.compute_weak_citations(b, [ev])
+        client = fake.Client.instances[-1]
+        # 1 prose input + 0 quote inputs (quote was hydrated from DB).
+        assert len(client.calls[0]) == 1

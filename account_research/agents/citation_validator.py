@@ -58,12 +58,21 @@ _VOYAGE_COSINE_THRESHOLD = float(
     os.environ.get("VOYAGE_COSINE_THRESHOLD", "0.50")
 )
 
-# Module-level cache: SHA256(raw_quote) → embedding vector. Quote text is
-# stable across revision iterations for the same ledger, so caching here
-# eliminates redundant Voyage calls on iter 2+. Prose embeddings change
-# every iter (Author re-emits) and are NOT cached. The cache is intentionally
-# global / process-lifetime — embeddings of the same text are deterministic.
+# Module-level in-memory cache: SHA256(raw_quote) → embedding vector. The
+# fast path for repeated lookups within a single process. B6 backs this
+# with a SQLite table (``quote_embeddings``) so the cache also survives
+# process restarts and is shared between CLI runs, the Streamlit refine
+# flow, and the test suite. Prose embeddings change every iter (Author
+# re-emits) and are NOT cached anywhere.
 _QUOTE_EMBEDDING_CACHE: dict[str, list[float]] = {}
+
+# B6 — when True, the in-memory cache also reads/writes ``quote_embeddings``
+# in the project SQLite. Default ON; tests that want a pure-memory cache
+# (no DB side-effect) can flip this to False via monkeypatch.
+_USE_DB_BACKED_CACHE = (
+    os.environ.get("EMBEDDING_CACHE_DB", "1").lower()
+    not in ("0", "false", "no", "off")
+)
 
 # One-shot warning gate when VOYAGE_API_KEY is missing but embeddings are on.
 _warned_missing_voyage_key = False
@@ -311,10 +320,15 @@ def _compute_weak_citations_embeddings(
         for p in pairs
     ]
 
-    # Identify quote inputs that are NOT yet in the cache.
+    # Identify quote inputs that are NOT yet in the cache. B6: hydrate the
+    # in-memory cache from SQLite first so cross-process / refine-after-run
+    # scenarios short-circuit Voyage entirely.
+    quote_hashes = [_quote_hash(q) for q in quote_inputs]
+    if _USE_DB_BACKED_CACHE:
+        _hydrate_cache_from_db(set(quote_hashes), _VOYAGE_MODEL)
+
     uncached_quote_inputs: list[str] = []
     uncached_quote_hashes: list[str] = []
-    quote_hashes = [_quote_hash(q) for q in quote_inputs]
     for q, h in zip(quote_inputs, quote_hashes):
         if h not in _QUOTE_EMBEDDING_CACHE and q and h not in uncached_quote_hashes:
             uncached_quote_inputs.append(q)
@@ -332,9 +346,14 @@ def _compute_weak_citations_embeddings(
     prose_vecs = embeddings[:n]
     new_quote_vecs = embeddings[n:]
 
-    # Populate cache from the newly-embedded quotes.
+    # Populate cache from the newly-embedded quotes (in-memory + DB).
     for h, vec in zip(uncached_quote_hashes, new_quote_vecs):
         _QUOTE_EMBEDDING_CACHE[h] = vec
+    if _USE_DB_BACKED_CACHE and uncached_quote_hashes:
+        _persist_cache_to_db(
+            {h: _QUOTE_EMBEDDING_CACHE[h] for h in uncached_quote_hashes},
+            _VOYAGE_MODEL,
+        )
 
     flags: list[dict] = []
     for i, (loc, prose, evidence_ids) in enumerate(pairs):
@@ -361,3 +380,55 @@ def _cosine(a, b) -> float:
     na = math.sqrt(sum(x * x for x in a)) or 1.0
     nb = math.sqrt(sum(y * y for y in b)) or 1.0
     return dot / (na * nb)
+
+
+# ---------------------------------------------------------------------------
+# B6 — SQLite-backed quote embedding cache
+# ---------------------------------------------------------------------------
+
+
+def _hydrate_cache_from_db(quote_hashes: set[str], model: str) -> None:
+    """Populate the in-memory cache from the ``quote_embeddings`` table for
+    any hashes we don't already hold. Best-effort: a DB failure logs a
+    warning and leaves the in-memory cache untouched."""
+    missing = {h for h in quote_hashes if h not in _QUOTE_EMBEDDING_CACHE}
+    if not missing:
+        return
+    try:
+        from account_research.db import SessionLocal, init_db
+        from account_research.ledger import get_quote_embedding
+
+        init_db()
+        with SessionLocal() as s:
+            for h in missing:
+                vec = get_quote_embedding(s, h, model)
+                if vec is not None:
+                    _QUOTE_EMBEDDING_CACHE[h] = vec
+    except Exception as exc:  # noqa: BLE001 — never block the pipeline on cache
+        logger.warning(
+            "Embedding cache: hydrate from DB failed (%s); continuing with "
+            "in-memory only", exc,
+        )
+
+
+def _persist_cache_to_db(
+    vectors_by_hash: dict[str, list[float]], model: str,
+) -> None:
+    """Write newly-embedded vectors to the ``quote_embeddings`` table.
+    Best-effort: failures log a warning but never block the pipeline."""
+    if not vectors_by_hash:
+        return
+    try:
+        from account_research.db import SessionLocal, init_db
+        from account_research.ledger import put_quote_embedding
+
+        init_db()
+        with SessionLocal() as s:
+            for h, vec in vectors_by_hash.items():
+                put_quote_embedding(s, h, model, list(vec))
+            s.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Embedding cache: persist to DB failed (%s); in-memory cache "
+            "still populated for the rest of this process", exc,
+        )
